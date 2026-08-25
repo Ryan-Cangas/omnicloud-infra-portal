@@ -14,7 +14,9 @@ import {
   HardDrive,
   Cpu,
   ShieldCheck,
+  Terminal,
 } from "lucide-react";
+import { VncTerminal } from "./components/VncTerminal";
 
 const queryClient = new QueryClient();
 
@@ -35,6 +37,9 @@ const API_BASE = "http://localhost:8000/api/v1";
 function Dashboard() {
   const queryClient = useQueryClient();
   const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [activeTerminal, setActiveTerminal] = useState<ProxmoxResource | null>(
+    null,
+  );
 
   // Poll cluster metrics every 4 seconds
   const {
@@ -135,6 +140,7 @@ function Dashboard() {
           {resources?.map((res) => {
             const isBusy = actionLoading === res.vmid;
             const isRunning = res.status === "running";
+            const displayMemPct = Math.min(100, Math.max(0, res.mem_usage_pct));
 
             return (
               <div
@@ -145,7 +151,11 @@ function Dashboard() {
                   <div className="flex items-center justify-between pb-3 border-b border-zinc-800/60">
                     <div className="flex items-center gap-3">
                       <div
-                        className={`p-2 rounded-lg ${isRunning ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-800 text-zinc-400"}`}
+                        className={`p-2 rounded-lg ${
+                          isRunning
+                            ? "bg-emerald-500/10 text-emerald-400"
+                            : "bg-zinc-800 text-zinc-400"
+                        }`}
                       >
                         <Server className="w-4 h-4" />
                       </div>
@@ -189,7 +199,7 @@ function Dashboard() {
                       </div>
                       <span className="text-sm font-mono font-medium text-zinc-200">
                         {isRunning
-                          ? `${res.mem_usage_pct}% of ${res.maxmem_gb}G`
+                          ? `${displayMemPct}% of ${res.maxmem_gb}G`
                           : `${res.maxmem_gb} GB`}
                       </span>
                     </div>
@@ -213,6 +223,12 @@ function Dashboard() {
                         className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium rounded-md transition-colors disabled:opacity-50"
                       >
                         <RotateCw className="w-3.5 h-3.5" /> Reboot
+                      </button>
+                      <button
+                        onClick={() => setActiveTerminal(res)}
+                        className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium rounded-md transition-colors"
+                      >
+                        <Terminal className="w-3.5 h-3.5" /> Console
                       </button>
                       <button
                         disabled={isBusy}
@@ -252,6 +268,17 @@ function Dashboard() {
           })}
         </div>
       </div>
+
+      {/* Terminal Modal */}
+      {activeTerminal && (
+        <VncTerminal
+          node={activeTerminal.node}
+          vmType={activeTerminal.type}
+          vmid={activeTerminal.vmid}
+          vmName={activeTerminal.name}
+          onClose={() => setActiveTerminal(null)}
+        />
+      )}
     </div>
   );
 }

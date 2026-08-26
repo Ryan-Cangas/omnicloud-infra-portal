@@ -20,12 +20,24 @@ export function VncTerminal({
 }: VncTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<any>(null);
+  const disconnectTimerRef = useRef<number | null>(null);
+
   const [status, setStatus] = useState<
     "connecting" | "connected" | "disconnected" | "error"
   >("connecting");
   const [errorMessage, setErrorMessage] = useState<string>("");
 
+  const clearDisconnectTimer = () => {
+    if (disconnectTimerRef.current !== null) {
+      clearTimeout(disconnectTimerRef.current);
+      disconnectTimerRef.current = null;
+    }
+  };
+
   const connectVnc = async () => {
+    clearDisconnectTimer();
+
+    // Clean up existing instance before reconnecting
     if (rfbRef.current) {
       try {
         rfbRef.current.disconnect();
@@ -37,10 +49,12 @@ export function VncTerminal({
     setErrorMessage("");
 
     try {
-      // Fetch ticket and session from backend
+      // 1. Fetch ticket, port, and session from FastAPI backend
       const res = await fetch(
         `http://localhost:8000/api/v1/nodes/${node}/${vmType}/${vmid}/vncproxy`,
-        { method: "POST" },
+        {
+          method: "POST",
+        },
       );
       if (!res.ok) throw new Error("Failed to obtain VNC ticket");
       const data = await res.json();
@@ -48,12 +62,12 @@ export function VncTerminal({
       if (!containerRef.current) return;
       containerRef.current.innerHTML = "";
 
-      // Pass both ticket and session_ticket to FastAPI WebSocket proxy
+      // 2. Connect directly to FastAPI proxy (bypasses browser self-signed SSL blocks entirely)
       const encodedTicket = encodeURIComponent(data.ticket);
       const encodedSession = encodeURIComponent(data.session_ticket);
       const wsUrl = `ws://localhost:8000/api/v1/ws/vnc/${node}/${vmType}/${vmid}?port=${data.port}&ticket=${encodedTicket}&session_ticket=${encodedSession}`;
 
-      // Initialize RFB with credentials from .env file
+      // 3. Initialize RFB client with credentials
       const rfb = new RFB(containerRef.current, wsUrl, {
         wsProtocols: ["binary"],
         credentials: { password: data.ticket },
@@ -63,14 +77,22 @@ export function VncTerminal({
       rfb.resizeSession = true;
 
       rfb.addEventListener("connect", () => {
+        clearDisconnectTimer();
         setStatus("connected");
+        setErrorMessage("");
       });
 
       rfb.addEventListener("disconnect", (e: any) => {
-        setStatus("disconnected");
-        if (e.detail?.clean === false) {
-          setErrorMessage("WebSocket connection closed.");
-        }
+        // Debounce disconnect event to ignore initial handshake phase drops
+        clearDisconnectTimer();
+        disconnectTimerRef.current = window.setTimeout(() => {
+          setStatus("disconnected");
+          if (e.detail?.clean === false) {
+            setErrorMessage(
+              "WebSocket handshake failed or connection lost. Ensure target host is active.",
+            );
+          }
+        }, 1500); // 1.5s grace period for handshake completion
       });
 
       rfbRef.current = rfb;
@@ -83,6 +105,7 @@ export function VncTerminal({
   useEffect(() => {
     connectVnc();
     return () => {
+      clearDisconnectTimer();
       if (rfbRef.current) {
         try {
           rfbRef.current.disconnect();

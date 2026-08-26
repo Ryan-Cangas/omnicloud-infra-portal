@@ -68,7 +68,7 @@
 
 ---
 
-## 🏛️ System Architecture
+## 🏛️ Initial System Architecture (Beta)
 
 ```text
   ┌────────────────────────────────────────────────────────┐

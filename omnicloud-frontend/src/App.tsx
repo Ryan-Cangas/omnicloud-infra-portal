@@ -592,7 +592,11 @@ export default function App() {
                             {vm.cpu_usage_pct}%
                           </td>
                           <td className="px-6 py-4 font-mono text-zinc-400">
-                            {vm.mem_usage_pct}% ({vm.maxmem_gb} GB)
+                            {Math.min(
+                              Math.max(vm.mem_usage_pct, 0),
+                              100,
+                            ).toFixed(2)}
+                            % ({vm.maxmem_gb} GB)
                           </td>
                           <td className="px-6 py-4 text-right space-x-2">
                             <button

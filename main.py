@@ -71,8 +71,8 @@ def get_cluster_inventory():
                 "status": item.get("status"),
                 "uptime": item.get("uptime", 0),
                 "maxmem_gb": round(item.get("maxmem", 0) / (1024**3), 2),
-                "mem_usage_pct": round((item.get("mem", 0) / max(item.get("maxmem", 1), 1)) * 100, 2),
-                "cpu_usage_pct": round(item.get("cpu", 0) * 100, 2),
+                "mem_usage_pct": round(min(max((item.get("mem", 0) / max(item.get("maxmem", 1), 1)) * 100, 0.0), 100.0), 2),
+                "cpu_usage_pct": round(min(max(item.get("cpu", 0) * 100, 0.0), 100.0), 2),
             }
             for item in resources
         ]

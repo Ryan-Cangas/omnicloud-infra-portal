@@ -13,23 +13,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from proxmoxer import ProxmoxAPI
 from dotenv import load_dotenv
 
-# Suppress TLS verification warnings for internal self-signed Proxmox certificates[cite: 1, 4]
+# Suppress TLS verification warnings for internal self-signed Proxmox certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 load_dotenv()
 
-# Hypervisor Node & Credentials Configuration[cite: 1, 4]
+# Hypervisor Node & Credentials Configuration
 PROXMOX_HOST = os.getenv("PROXMOX_HOST", "192.168.1.200")
 PROXMOX_USER = os.getenv("PROXMOX_USER", "root@pam")
 PROXMOX_PASSWORD = os.getenv("PROXMOX_PASSWORD", "password")
 
-# Initialize FastAPI Application[cite: 1, 4]
+# Initialize FastAPI Application
 app = FastAPI(
     title="Sovereign Cloud CMP & Hypervisor Proxy Engine",
     description="Multi-tenant cloud management control plane with isolated hypervisor proxies.",
     version="1.0.0"
 )
 
-# Cross-Origin Resource Sharing (CORS) Middleware for local Vite development[cite: 1, 4]
+# Cross-Origin Resource Sharing (CORS) Middleware for local Vite development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -38,7 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Persistent Proxmox API Client for state inspection and lifecycle calls[cite: 1, 4]
+# Persistent Proxmox API Client for state inspection and lifecycle calls
 proxmox = ProxmoxAPI(
     PROXMOX_HOST,
     user=PROXMOX_USER,
@@ -138,13 +138,13 @@ def get_pve_auth_session():
 @app.get("/api/v1/cluster/resources")
 def get_cluster_inventory(user: UserContext = Depends(get_current_user)):
     """
-    Fetches guest VM and LXC inventory, applying tenant filtering and usage percentage clamps[cite: 1, 4].
+    Fetches guest VM and LXC inventory, applying tenant filtering and usage percentage clamps.
     """
     if user.role == "BillingManager":
         return []
 
     try:
-        resources = proxmox.cluster.resources.get(type="vm")[cite: 1, 4]
+        resources = proxmox.cluster.resources.get(type="vm")
         allowed_vmids = TENANT_VM_MAP.get(user.tenant_id, [])
 
         filtered = []
@@ -155,7 +155,7 @@ def get_cluster_inventory(user: UserContext = Depends(get_current_user)):
             if user.role != "SuperAdmin" and vmid not in allowed_vmids:
                 continue
 
-            maxmem_gb = round(item.get("maxmem", 0) / (1024**3), 2)[cite: 1, 4]
+            maxmem_gb = round(item.get("maxmem", 0) / (1024**3), 2)
             # Clamp percentage strictly between 0.0% and 100.0% to prevent ballooning artifacts
             mem_pct = round(min(max((item.get("mem", 0) / max(item.get("maxmem", 1), 1)) * 100, 0.0), 100.0), 2)
             cpu_pct = round(min(max(item.get("cpu", 0) * 100, 0.0), 100.0), 2)
@@ -184,13 +184,13 @@ def control_vm_power(
     user: UserContext = Depends(get_current_user)
 ):
     """
-    Triggers power state changes (start, shutdown, stop, reset) with tenant RBAC enforcement[cite: 1, 4].
+    Triggers power state changes (start, shutdown, stop, reset) with tenant RBAC enforcement.
     """
     enforce_vm_access(vmid, user, required_action="power")
     try:
-        node_controller = getattr(proxmox.nodes(node), vm_type)(vmid)[cite: 1, 4]
-        status_controller = getattr(node_controller.status, action)[cite: 1, 4]
-        upid = status_controller.post()[cite: 1, 4]
+        node_controller = getattr(proxmox.nodes(node), vm_type)(vmid)
+        status_controller = getattr(node_controller.status, action)
+        upid = status_controller.post()
         return {
             "status": "success", 
             "action": action, 
@@ -214,11 +214,11 @@ def generate_vnc_proxy_ticket(
     enforce_vm_access(vmid, user, required_action="console")
     try:
         session_ticket, csrf_token = get_pve_auth_session()
-        url = f"https://{PROXMOX_HOST}:8006/api2/json/nodes/{node}/{vm_type}/{vmid}/vncproxy"[cite: 4]
+        url = f"https://{PROXMOX_HOST}:8006/api2/json/nodes/{node}/{vm_type}/{vmid}/vncproxy"
         headers = {"CSRFPreventionToken": csrf_token}
         cookies = {"PVEAuthCookie": session_ticket}
         
-        resp = requests.post(url, headers=headers, cookies=cookies, data={"websocket": 1}, verify=False, timeout=10)[cite: 4]
+        resp = requests.post(url, headers=headers, cookies=cookies, data={"websocket": 1}, verify=False, timeout=10)
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail="Proxmox refused VNC ticket request")
             

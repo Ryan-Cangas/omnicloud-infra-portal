@@ -1,6 +1,7 @@
 <div align="center">
 
 # 🌐 OmniCloud Infrastructure Portal
+
 ### Sovereign Cloud Management Platform (CMP) & Proxmox Orchestrator
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
@@ -36,21 +37,21 @@
     <tr>
       <td width="50%">
         <h4 align="center">Interactive VM/LXC Terminal (noVNC)</h4>
-        <img src="./docs/assets/terminal-preview.png" alt="noVNC Web Terminal" />
+        <img src="/img/noVNC.png" alt="noVNC Web Terminal" />
       </td>
       <td width="50%">
         <h4 align="center">Bare-Metal Node Analytics</h4>
-        <img src="./docs/assets/analytics-preview.png" alt="Proxmox Analytics" />
+        <img src="/img/pve-analytics.png" alt="Proxmox Analytics" />
       </td>
     </tr>
     <tr>
       <td width="50%">
         <h4 align="center">Multi-Tenant Workspaces</h4>
-        <img src="./docs/assets/workspaces-preview.png" alt="Tenant Workspaces" />
+        <img src="/img/tenant-workspaces.png" alt="Tenant Workspaces" />
       </td>
       <td width="50%">
         <h4 align="center">Integrated Partner CRM & Billing</h4>
-        <img src="./docs/assets/orders-preview.png" alt="Billing Statements" />
+        <img src="/img/billing-statements.png" alt="Billing Statements" />
       </td>
     </tr>
   </table>
@@ -60,11 +61,11 @@
 
 ## ✨ Key Features
 
-* **⚡ Out-of-Band RFB WebSocket Proxy:** Direct non-blocking binary stream pass-through via FastAPI to Proxmox VE's `vncwebsocket` daemon, completely eliminating client-side SSL and self-signed certificate hurdles.
-* **🛡️ Multi-Tenant RBAC Partitioning:** Strict isolation separating SuperAdmins, Tenant Administrators, Read-only Viewers, and Financial Operators.
-* **📊 Bare-Metal Telemetry Ingestion:** Real-time polling of host socket topologies, memory pools, root storage pools, and kernel versions.
-* **🎮 Guest Lifecycle Controls:** Start, graceful shutdown, and console triggers guarded by strict tenant ownership checks.
-* **💼 Integrated Sovereign CMP Suite:** Native operational workspaces, customer accounts, billing invoices, tasks queue, documentation vault, and support channels.
+- **⚡ Out-of-Band RFB WebSocket Proxy:** Direct non-blocking binary stream pass-through via FastAPI to Proxmox VE's `vncwebsocket` daemon, completely eliminating client-side SSL and self-signed certificate hurdles.
+- **🛡️ Multi-Tenant RBAC Partitioning:** Strict isolation separating SuperAdmins, Tenant Administrators, Read-only Viewers, and Financial Operators.
+- **📊 Bare-Metal Telemetry Ingestion:** Real-time polling of host socket topologies, memory pools, root storage pools, and kernel versions.
+- **🎮 Guest Lifecycle Controls:** Start, graceful shutdown, and console triggers guarded by strict tenant ownership checks.
+- **💼 Integrated Sovereign CMP Suite:** Native operational workspaces, customer accounts, billing invoices, tasks queue, documentation vault, and support channels.
 
 ---
 
@@ -90,3 +91,4 @@
   │   - QEMU Virtual Machines / LXC Containers             │
   │   - /api2/json/access/ticket & /vncwebsocket daemons   │
   └────────────────────────────────────────────────────────┘
+```

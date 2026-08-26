@@ -15,6 +15,8 @@ import asyncio
 from typing import Optional, List
 import requests
 import urllib3
+import urllib.parse
+import inspect
 import websockets
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -300,34 +302,38 @@ async def vnc_websocket_proxy(
     ticket: str,
     session_ticket: str,
 ):
-    """
-    Bidirectional WebSocket reverse proxy tunnel bridging the browser RFB client
-    to Proxmox's internal `vncwebsocket` daemon over raw TCP/TLS streams.
-    """
-    # Accept client WebSocket subprotocol
     await websocket.accept(subprotocol="binary")
     
-    # Target Proxmox internal WebSocket URL
+    # Safely decode parameters if they arrived URL-encoded
+    raw_ticket = urllib.parse.unquote(ticket)
+    raw_session = urllib.parse.unquote(session_ticket)
+    encoded_vncticket = urllib.parse.quote(raw_ticket, safe="")
+
     pve_ws_url = (
         f"wss://{PROXMOX_HOST}:8006/api2/json/nodes/{node}/{vm_type}/{vmid}/vncwebsocket"
-        f"?port={port}&vncticket={ticket}"
+        f"?port={port}&vncticket={encoded_vncticket}"
     )
     
-    # Bypass self-signed internal Proxmox certificate validation
     ssl_context = ssl._create_unverified_context()
-    extra_headers = {"Cookie": f"PVEAuthCookie={session_ticket}"}
+    headers_dict = {"Cookie": f"PVEAuthCookie={raw_session}"}
+
+    # Inspect websockets.connect signature to handle API version differences
+    sig = inspect.signature(websockets.connect)
+    connect_kwargs = {
+        "subprotocols": ["binary"],
+        "ssl": ssl_context,
+        "max_size": 16 * 1024 * 1024,
+    }
+
+    if "additional_headers" in sig.parameters:
+        connect_kwargs["additional_headers"] = headers_dict
+    elif "extra_headers" in sig.parameters:
+        connect_kwargs["extra_headers"] = headers_dict
+    else:
+        connect_kwargs["additional_headers"] = headers_dict
 
     try:
-        # Establish upstream bridge to Proxmox
-        async with websockets.connect(
-            pve_ws_url,
-            subprotocols=["binary"],
-            ssl=ssl_context,
-            extra_headers=extra_headers,
-            max_size=10 * 1024 * 1024,
-        ) as pve_ws:
-            
-            # Forward client input (keyboard/mouse RFB events) to Proxmox
+        async with websockets.connect(pve_ws_url, **connect_kwargs) as pve_ws:
             async def client_to_pve():
                 try:
                     while True:
@@ -336,22 +342,19 @@ async def vnc_websocket_proxy(
                 except (WebSocketDisconnect, Exception):
                     pass
 
-            # Forward Proxmox screen updates (framebuffer binary streams) to client
             async def pve_to_client():
                 try:
                     async for message in pve_ws:
                         if isinstance(message, str):
-                            # Pass initial RFB greeting string as latin-1 bytes
                             await websocket.send_bytes(message.encode("latin-1"))
                         else:
                             await websocket.send_bytes(message)
                 except Exception:
                     pass
 
-            # Concurrently execute bidirectional streaming
             await asyncio.gather(client_to_pve(), pve_to_client())
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WebSocket Proxy Error]: {e}")
     finally:
         try:
             await websocket.close()

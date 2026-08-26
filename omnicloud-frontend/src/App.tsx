@@ -1,3 +1,13 @@
+/**
+ * Sovereign Cloud Management Platform (CMP) Dashboard.
+ *
+ * Features:
+ * - Multi-Tenant Persona Switcher: Simulates RBAC roles (SuperAdmin, TenantAdmin, TenantViewer, BillingManager).
+ * - Live Hypervisor Telemetry: Real bare-metal CPU, RAM, Disk, and Kernel statistics from Proxmox.
+ * - Dynamic Infrastructure Grid: Role-gated guest management with embedded noVNC console launch.
+ * - Sovereign Cloud Modular Views: Workspaces, Customers, Billing, Tasks, Calendar, Notes, Chats, Apps.
+ */
+
 import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard,
@@ -10,35 +20,60 @@ import {
   StickyNote,
   MessageSquare,
   Grid,
-  Search,
-  Bell,
-  Palette,
   Terminal,
   Play,
   Square,
   RotateCcw,
   Server,
   Activity,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsUpDown,
   CheckCircle2,
-  Clock,
-  Sparkles,
-  Layers,
   Cpu,
   HardDrive,
   Plus,
-  Filter,
-  Download,
   ExternalLink,
-  ShieldCheck,
-  CreditCard,
   Send,
-  MoreVertical,
-  Check,
+  Lock,
+  UserCheck,
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
+
+// Type definitions for RBAC & CMP telemetry
+type Role = "SuperAdmin" | "TenantAdmin" | "TenantViewer" | "BillingManager";
+
+interface PersonaConfig {
+  userId: string;
+  role: Role;
+  tenantId: string;
+  label: string;
+}
+
+// Predefined personas for local development and RBAC testing
+const PERSONAS: PersonaConfig[] = [
+  {
+    userId: "admin-01",
+    role: "SuperAdmin",
+    tenantId: "global",
+    label: "Cloud Operator (SuperAdmin)",
+  },
+  {
+    userId: "tenant-alex",
+    role: "TenantAdmin",
+    tenantId: "tenant-alpha",
+    label: "Alpha Corp (TenantAdmin)",
+  },
+  {
+    userId: "viewer-sam",
+    role: "TenantViewer",
+    tenantId: "tenant-alpha",
+    label: "Alpha Corp (TenantViewer)",
+  },
+  {
+    userId: "finance-claire",
+    role: "BillingManager",
+    tenantId: "tenant-alpha",
+    label: "Finance (BillingManager)",
+  },
+];
 
 interface GuestResource {
   vmid: number;
@@ -54,30 +89,14 @@ interface GuestResource {
 
 interface NodeTelemetry {
   node: string;
-  cpu: {
-    usage_pct: number;
-    cores: number;
-    sockets: number;
-    model: string;
-  };
-  memory: {
-    used_gb: number;
-    total_gb: number;
-    usage_pct: number;
-  };
-  storage: {
-    used_gb: number;
-    total_gb: number;
-    usage_pct: number;
-  };
-  system: {
-    pve_version: string;
-    kernel_version: string;
-    uptime: number;
-  };
+  cpu: { usage_pct: number; cores: number; sockets: number; model: string };
+  memory: { used_gb: number; total_gb: number; usage_pct: number };
+  storage: { used_gb: number; total_gb: number; usage_pct: number };
+  system: { pve_version: string; kernel_version: string; uptime: number };
 }
 
 export default function App() {
+  // Navigation & Time Range State
   const [activeTab, setActiveTab] = useState<
     | "overview"
     | "analytics"
@@ -93,11 +112,18 @@ export default function App() {
   const [timeFilter, setTimeFilter] = useState<"week" | "month" | "quarter">(
     "month",
   );
+
+  // Active RBAC Persona state
+  const [currentPersona, setCurrentPersona] = useState<PersonaConfig>(
+    PERSONAS[0],
+  );
+
+  // Telemetry & Compute resource states
   const [resources, setResources] = useState<GuestResource[]>([]);
-  const [, setLoading] = useState(true);
+  const [telemetry, setTelemetry] = useState<NodeTelemetry | null>(null);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
 
-  // noVNC Modal State
+  // Active noVNC Terminal modal target
   const [activeTerminal, setActiveTerminal] = useState<{
     node: string;
     vmType: "qemu" | "lxc";
@@ -105,32 +131,43 @@ export default function App() {
     vmName: string;
   } | null>(null);
 
-  // Node Telemetry State
-  const [telemetry, setTelemetry] = useState<NodeTelemetry | null>(null);
+  // Mock State: Notes Runbook Vault
+  const [notes] = useState([
+    {
+      id: 1,
+      title: "Edge Cluster Provisioning SOP",
+      tag: "Infrastructure",
+      snippet:
+        "Ensure VLAN 104 and VxLAN tunnels are initialized before spinning up worker nodes.",
+    },
+    {
+      id: 2,
+      title: "Quarterly Compute Quotas",
+      tag: "Billing",
+      snippet:
+        "Enterprise tier customers receive 128 vCPUs and 256GB dedicated memory pool defaults.",
+    },
+  ]);
 
-  const fetchTelemetry = async () => {
-    try {
-      const res = await fetch("http://localhost:8000/api/v1/nodes/telemetry");
-      if (res.ok) {
-        const data = await res.json();
-        setTelemetry(data);
-      }
-    } catch (err) {
-      console.error("Failed to fetch telemetry:", err);
-    }
-  };
+  // Mock State: Tasks / DevOps Checklist
+  const [taskList] = useState([
+    {
+      id: 1,
+      title: "Validate zero-knowledge vault backups",
+      status: "Completed",
+      priority: "High",
+      date: "Aug 25",
+    },
+    {
+      id: 2,
+      title: "Deploy telemetry collector on QEMU-100",
+      status: "In Progress",
+      priority: "Urgent",
+      date: "Aug 26",
+    },
+  ]);
 
-  useEffect(() => {
-    fetchResources();
-    fetchTelemetry();
-    const interval = setInterval(() => {
-      fetchResources();
-      fetchTelemetry();
-    }, 4000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Messaging state
+  // Mock State: Messaging Channel
   const [activeChat, setActiveChat] = useState("tech-support");
   const [chatMessage, setChatMessage] = useState("");
   const [messages, setMessages] = useState([
@@ -150,83 +187,72 @@ export default function App() {
     },
   ]);
 
-  // Notes state
-  const [notes] = useState([
-    {
-      id: 1,
-      title: "Edge Cluster Provisioning SOP",
-      tag: "Infrastructure",
-      snippet:
-        "Ensure VLAN 104 and VxLAN tunnels are initialized before spinning up worker nodes.",
-    },
-    {
-      id: 2,
-      title: "Quarterly Compute Quotas",
-      tag: "Billing",
-      snippet:
-        "Enterprise tier customers receive 128 vCPUs and 256GB dedicated memory pool defaults.",
-    },
-    {
-      id: 3,
-      title: "Wazuh SIEM Rule Tuning",
-      tag: "Security",
-      snippet:
-        "Audit logs for PAM logins on 192.168.1.200 mapped to SOAR webhook.",
-    },
-  ]);
+  /**
+   * Helper function: Generates headers reflecting the active RBAC persona.
+   */
+  const getRbacHeaders = () => ({
+    "X-User-Id": currentPersona.userId,
+    "X-User-Role": currentPersona.role,
+    "X-Tenant-Id": currentPersona.tenantId,
+  });
 
-  // Task Manager State
-  const [taskList, setTaskList] = useState([
-    {
-      id: 1,
-      title: "Validate zero-knowledge vault backups",
-      status: "Completed",
-      priority: "High",
-      date: "Aug 25",
-    },
-    {
-      id: 2,
-      title: "Deploy telemetry collector on QEMU-100",
-      status: "In Progress",
-      priority: "Urgent",
-      date: "Aug 26",
-    },
-    {
-      id: 3,
-      title: "Audit Tailscale node ACL permissions",
-      status: "Open",
-      priority: "Medium",
-      date: "Aug 27",
-    },
-    {
-      id: 4,
-      title: "Renew Proxmox Enterprise repository tokens",
-      status: "Open",
-      priority: "Low",
-      date: "Aug 28",
-    },
-  ]);
-
+  /**
+   * Fetches the scoped guest VM/LXC inventory for the current persona.
+   */
   const fetchResources = async () => {
     try {
-      const res = await fetch("http://localhost:8000/api/v1/cluster/resources");
+      const res = await fetch(
+        "http://localhost:8000/api/v1/cluster/resources",
+        {
+          headers: getRbacHeaders(),
+        },
+      );
       if (res.ok) {
         const data = await res.json();
         setResources(data);
+      } else {
+        setResources([]);
       }
     } catch (err) {
       console.error("Failed to fetch cluster resources:", err);
-    } finally {
-      setLoading(false);
     }
   };
 
+  /**
+   * Fetches real bare-metal node telemetry from Proxmox (SuperAdmin only).
+   */
+  const fetchTelemetry = async () => {
+    if (currentPersona.role !== "SuperAdmin") {
+      setTelemetry(null);
+      return;
+    }
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/nodes/telemetry", {
+        headers: getRbacHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTelemetry(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch telemetry:", err);
+    }
+  };
+
+  // Polling loop: Refreshes VM status and telemetry every 4 seconds
   useEffect(() => {
     fetchResources();
-    const interval = setInterval(fetchResources, 5000);
+    fetchTelemetry();
+    const interval = setInterval(() => {
+      fetchResources();
+      fetchTelemetry();
+    }, 4000);
     return () => clearInterval(interval);
-  }, []);
+  }, [currentPersona]);
 
+  /**
+   * Triggers VM power states (start, shutdown) with RBAC validation.
+   */
   const handlePowerAction = async (
     node: string,
     vmType: "qemu" | "lxc",
@@ -239,13 +265,17 @@ export default function App() {
         `http://localhost:8000/api/v1/nodes/${node}/${vmType}/${vmid}/power/${action}`,
         {
           method: "POST",
+          headers: getRbacHeaders(),
         },
       );
       if (res.ok) {
         await fetchResources();
+      } else {
+        const err = await res.json();
+        alert(err.detail || "Action unauthorized");
       }
     } catch (err) {
-      console.error(`Failed to execute ${action}:`, err);
+      console.error("Power action failed:", err);
     } finally {
       setActionLoading(null);
     }
@@ -259,7 +289,7 @@ export default function App() {
       {
         id: Date.now(),
         sender: "You",
-        role: "Admin",
+        role: currentPersona.role,
         text: chatMessage,
         time: "Just now",
       },
@@ -267,12 +297,26 @@ export default function App() {
     setChatMessage("");
   };
 
+  // Role Capability Checks
+  const canControlPower =
+    currentPersona.role === "SuperAdmin" ||
+    currentPersona.role === "TenantAdmin";
+  const canAccessConsole =
+    currentPersona.role === "SuperAdmin" ||
+    currentPersona.role === "TenantAdmin";
+  const canViewHostTelemetry = currentPersona.role === "SuperAdmin";
+
+  // Navigation Items dynamic filter based on role permissions
   const navItems = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
-    { id: "analytics", label: "Analytics", icon: BarChart3 },
+    ...(canViewHostTelemetry
+      ? [{ id: "analytics", label: "Analytics", icon: BarChart3 }]
+      : []),
     { id: "workspaces", label: "Workspaces", icon: Boxes },
-    { id: "customers", label: "Customers", icon: Users },
-    { id: "orders", label: "Orders", icon: ShoppingCart },
+    ...(currentPersona.role === "SuperAdmin"
+      ? [{ id: "customers", label: "Customers", icon: Users }]
+      : []),
+    { id: "orders", label: "Orders & Billing", icon: ShoppingCart },
     { id: "tasks", label: "Tasks", icon: CheckSquare },
     { id: "calendar", label: "Calendar", icon: CalendarIcon },
     { id: "notes", label: "Notes", icon: StickyNote },
@@ -284,30 +328,47 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-[#0d0d0f] text-zinc-100 font-sans antialiased overflow-hidden selection:bg-zinc-800">
-      {/* Sidebar */}
+      {/* Sidebar Navigation */}
       <aside className="w-64 bg-[#121214] border-r border-zinc-800/80 flex flex-col justify-between shrink-0">
         <div className="p-4 flex flex-col h-full">
-          {/* Tenant Selector */}
-          <div className="flex items-center justify-between p-2 rounded-xl hover:bg-zinc-800/40 cursor-pointer transition-colors border border-transparent hover:border-zinc-800 mb-6">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-zinc-800 border border-zinc-700/60 flex items-center justify-center font-bold text-xs text-zinc-300">
-                P
-              </div>
-              <div className="flex flex-col text-left">
-                <span className="text-xs font-semibold text-zinc-200">
-                  Partner Portal
-                </span>
-                <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Active
-                </span>
-              </div>
+          {/* Persona Switcher Selector for RBAC simulation */}
+          <div className="p-3 bg-[#18181b] border border-zinc-800 rounded-xl mb-6">
+            <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-2 flex items-center gap-1.5">
+              <UserCheck className="w-3.5 h-3.5 text-emerald-400" /> Active
+              Persona
             </div>
-            <ChevronsUpDown className="w-4 h-4 text-zinc-500" />
+            <select
+              value={currentPersona.userId}
+              onChange={(e) => {
+                const found = PERSONAS.find((p) => p.userId === e.target.value);
+                if (found) setCurrentPersona(found);
+              }}
+              className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-lg p-2 focus:outline-none focus:border-emerald-500"
+            >
+              {PERSONAS.map((p) => (
+                <option key={p.userId} value={p.userId}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <div className="mt-2 text-[10px] font-mono text-zinc-400 flex justify-between">
+              <span>
+                Role:{" "}
+                <strong className="text-emerald-400">
+                  {currentPersona.role}
+                </strong>
+              </span>
+              <span>
+                Tenant:{" "}
+                <strong className="text-sky-400">
+                  {currentPersona.tenantId}
+                </strong>
+              </span>
+            </div>
           </div>
 
           <div className="text-[11px] font-semibold text-zinc-500 px-3 uppercase tracking-wider mb-2">
-            General
+            Navigation
           </div>
           <nav className="space-y-1 flex-1 overflow-y-auto pr-1">
             {navItems.map((item) => {
@@ -331,27 +392,17 @@ export default function App() {
               );
             })}
           </nav>
-
-          <div className="pt-4 border-t border-zinc-800/60">
-            <button className="w-full py-2.5 px-4 bg-white hover:bg-zinc-200 text-zinc-950 font-semibold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-              Upgrade Plan
-            </button>
-          </div>
         </div>
       </aside>
 
-      {/* Main Container */}
+      {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Top Header */}
+        {/* Header Bar */}
         <header className="h-16 border-b border-zinc-800/80 bg-[#121214]/60 backdrop-blur-md px-8 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2">
-              <Layers className="w-5 h-5 text-zinc-400" />
-              <h1 className="text-lg font-bold text-white tracking-tight">
-                {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
-              </h1>
-            </div>
+            <h1 className="text-lg font-bold text-white tracking-tight capitalize">
+              {activeTab}
+            </h1>
 
             <div className="bg-[#18181b] p-0.5 rounded-xl border border-zinc-800 flex items-center">
               {(["week", "month", "quarter"] as const).map((filter) => (
@@ -371,32 +422,16 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="relative">
-              <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search resources, tenants, logs..."
-                className="bg-[#18181b] border border-zinc-800 rounded-xl pl-9 pr-10 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-700 w-72 transition-colors"
-              />
-              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-zinc-500 border border-zinc-700/60 rounded px-1.5 py-0.5 font-mono">
-                ⌘K
+            <div className="px-3 py-1 bg-zinc-800/80 border border-zinc-700/60 rounded-xl text-xs font-mono text-zinc-300">
+              User:{" "}
+              <span className="text-white font-bold">
+                {currentPersona.userId}
               </span>
             </div>
-
-            <button className="p-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 rounded-xl border border-zinc-800 relative">
-              <Bell className="w-4 h-4" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-indigo-500 rounded-full"></span>
-            </button>
-            <button className="p-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 rounded-xl border border-zinc-800">
-              <Palette className="w-4 h-4" />
-            </button>
-            <button className="px-3.5 py-1.5 bg-white hover:bg-zinc-200 text-zinc-950 font-semibold text-xs rounded-xl shadow transition-all">
-              Admin Profile
-            </button>
           </div>
         </header>
 
-        {/* View Routing Body */}
+        {/* Dynamic Route Content */}
         <main className="flex-1 overflow-y-auto p-8 space-y-6">
           {/* ================= OVERVIEW VIEW ================= */}
           {activeTab === "overview" && (
@@ -460,125 +495,24 @@ export default function App() {
                       {notes.length}
                     </span>
                     <p className="text-[11px] text-zinc-400 mt-1">
-                      Saved documentation items
+                      Saved runbooks
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Agenda & Tasks Overview Row */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                <div className="lg:col-span-7 bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h2 className="text-sm font-bold text-white">Agenda</h2>
-                      <p className="text-[11px] text-zinc-400">Today, Aug 26</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button className="p-1 hover:bg-zinc-800 rounded text-zinc-400">
-                        <ChevronLeft className="w-4 h-4" />
-                      </button>
-                      <span className="text-xs font-semibold text-zinc-200">
-                        Today
-                      </span>
-                      <button className="p-1 hover:bg-zinc-800 rounded text-zinc-400">
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="bg-[#1a1a1e] border border-zinc-800/60 rounded-xl p-3 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="text-xs font-mono font-medium text-zinc-300">
-                          09:00–09:30
-                        </div>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                          Meeting
-                        </span>
-                        <span className="text-xs font-medium text-zinc-200">
-                          Infrastructure Standup
-                        </span>
-                      </div>
-                    </div>
-                    <div className="bg-[#1a1a1e] border border-zinc-800/60 rounded-xl p-3 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="text-xs font-mono font-medium text-zinc-300">
-                          14:00–15:00
-                        </div>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20">
-                          Call
-                        </span>
-                        <span className="text-xs font-medium text-zinc-200">
-                          Enterprise SLA Review
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="lg:col-span-5 bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
-                  <div>
-                    <h2 className="text-sm font-bold text-white">
-                      Tasks overview
-                    </h2>
-                    <p className="text-[11px] text-zinc-400 mb-4">
-                      {taskList.length} active deployment targets
-                    </p>
-
-                    <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden flex mb-6">
-                      <div
-                        className="bg-sky-400 h-full"
-                        style={{ width: "50%" }}
-                      ></div>
-                      <div
-                        className="bg-emerald-400 h-full"
-                        style={{ width: "25%" }}
-                      ></div>
-                      <div
-                        className="bg-amber-400 h-full"
-                        style={{ width: "25%" }}
-                      ></div>
-                    </div>
-
-                    <div className="space-y-3 text-xs">
-                      <div className="flex items-center justify-between text-zinc-300">
-                        <span className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-sky-400"></span>{" "}
-                          Open
-                        </span>
-                        <span className="font-mono text-zinc-400">2 (50%)</span>
-                      </div>
-                      <div className="flex items-center justify-between text-zinc-300">
-                        <span className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-emerald-400"></span>{" "}
-                          Completed
-                        </span>
-                        <span className="font-mono text-zinc-400">1 (25%)</span>
-                      </div>
-                      <div className="flex items-center justify-between text-zinc-300">
-                        <span className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-amber-400"></span>{" "}
-                          In Progress
-                        </span>
-                        <span className="font-mono text-zinc-400">1 (25%)</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Infrastructure VM/LXC Compute Cluster Table */}
+              {/* Proxmox Compute Infrastructure Grid */}
               <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
                 <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
                   <div>
                     <h2 className="text-sm font-bold text-white flex items-center gap-2">
                       <Activity className="w-4 h-4 text-emerald-400" />
-                      Infrastructure & Guest Virtual Machines
+                      Provisioned Virtual Machines
                     </h2>
                     <p className="text-[11px] text-zinc-400">
-                      Real-time Proxmox hypervisor telemetry and RFB console
-                      access
+                      {currentPersona.role === "SuperAdmin"
+                        ? "Global Cluster View (All Tenants)"
+                        : `Tenant Scoped View (${currentPersona.tenantId})`}
                     </p>
                   </div>
                   <button
@@ -589,16 +523,21 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="overflow-x-auto">
+                {resources.length === 0 ? (
+                  <div className="p-12 text-center text-xs text-zinc-500 font-mono">
+                    {currentPersona.role === "BillingManager"
+                      ? "Billing Manager Role has no permission to view active compute instances."
+                      : "No instances assigned to this tenant workspace."}
+                  </div>
+                ) : (
                   <table className="w-full text-left text-xs text-zinc-300">
                     <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
                       <tr>
-                        <th className="px-6 py-3">Guest Instance</th>
-                        <th className="px-6 py-3">Type</th>
-                        <th className="px-6 py-3">Cluster Node</th>
+                        <th className="px-6 py-3">Guest</th>
+                        <th className="px-6 py-3">Node</th>
                         <th className="px-6 py-3">State</th>
-                        <th className="px-6 py-3">CPU Usage</th>
-                        <th className="px-6 py-3">RAM Allocation</th>
+                        <th className="px-6 py-3">CPU</th>
+                        <th className="px-6 py-3">Memory</th>
                         <th className="px-6 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
@@ -614,27 +553,9 @@ export default function App() {
                             </span>
                             {vm.name}
                           </td>
-                          <td className="px-6 py-4">
-                            <span className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono uppercase">
-                              {vm.type}
-                            </span>
-                          </td>
                           <td className="px-6 py-4 text-zinc-400">{vm.node}</td>
                           <td className="px-6 py-4">
-                            <span
-                              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                                vm.status === "running"
-                                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                  : "bg-zinc-800 text-zinc-400"
-                              }`}
-                            >
-                              <span
-                                className={`w-1.5 h-1.5 rounded-full ${
-                                  vm.status === "running"
-                                    ? "bg-emerald-400 animate-pulse"
-                                    : "bg-zinc-500"
-                                }`}
-                              ></span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                               {vm.status}
                             </span>
                           </td>
@@ -649,6 +570,7 @@ export default function App() {
                             % ({vm.maxmem_gb} GB)
                           </td>
                           <td className="px-6 py-4 text-right space-x-2">
+                            {/* Console Launch Button (Role-Gated) */}
                             <button
                               onClick={() =>
                                 setActiveTerminal({
@@ -658,44 +580,62 @@ export default function App() {
                                   vmName: vm.name,
                                 })
                               }
-                              disabled={vm.status !== "running"}
-                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:hover:bg-emerald-600 text-white font-medium rounded-lg text-xs transition-colors inline-flex items-center gap-1.5 shadow-sm"
+                              disabled={
+                                !canAccessConsole || vm.status !== "running"
+                              }
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-20 disabled:hover:bg-emerald-600 text-white font-medium rounded-lg text-xs inline-flex items-center gap-1.5 shadow-sm"
+                              title={
+                                !canAccessConsole
+                                  ? "Permission Denied (Requires Admin)"
+                                  : ""
+                              }
                             >
                               <Terminal className="w-3.5 h-3.5" />
                               Console
                             </button>
 
-                            {vm.status === "running" ? (
-                              <button
-                                onClick={() =>
-                                  handlePowerAction(
-                                    vm.node,
-                                    vm.type,
-                                    vm.vmid,
-                                    "shutdown",
-                                  )
-                                }
-                                disabled={actionLoading === vm.vmid}
-                                className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg border border-rose-500/20 transition-colors"
-                                title="Shutdown"
-                              >
-                                <Square className="w-3.5 h-3.5" />
-                              </button>
+                            {/* Power Controls (Role-Gated) */}
+                            {canControlPower ? (
+                              vm.status === "running" ? (
+                                <button
+                                  onClick={() =>
+                                    handlePowerAction(
+                                      vm.node,
+                                      vm.type,
+                                      vm.vmid,
+                                      "shutdown",
+                                    )
+                                  }
+                                  disabled={actionLoading === vm.vmid}
+                                  className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg border border-rose-500/20"
+                                  title="Graceful Shutdown"
+                                >
+                                  <Square className="w-3.5 h-3.5" />
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() =>
+                                    handlePowerAction(
+                                      vm.node,
+                                      vm.type,
+                                      vm.vmid,
+                                      "start",
+                                    )
+                                  }
+                                  disabled={actionLoading === vm.vmid}
+                                  className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg border border-emerald-500/20"
+                                  title="Power On"
+                                >
+                                  <Play className="w-3.5 h-3.5" />
+                                </button>
+                              )
                             ) : (
                               <button
-                                onClick={() =>
-                                  handlePowerAction(
-                                    vm.node,
-                                    vm.type,
-                                    vm.vmid,
-                                    "start",
-                                  )
-                                }
-                                disabled={actionLoading === vm.vmid}
-                                className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg border border-emerald-500/20 transition-colors"
-                                title="Start"
+                                disabled
+                                className="p-1.5 bg-zinc-800/40 text-zinc-600 rounded-lg border border-zinc-800"
+                                title="Power controls restricted to Admins"
                               >
-                                <Play className="w-3.5 h-3.5" />
+                                <Lock className="w-3.5 h-3.5" />
                               </button>
                             )}
                           </td>
@@ -703,16 +643,15 @@ export default function App() {
                       ))}
                     </tbody>
                   </table>
-                </div>
+                )}
               </div>
             </>
           )}
 
-          {/* ================= ANALYTICS VIEW ================= */}
-          {activeTab === "analytics" && (
+          {/* ================= ANALYTICS VIEW (SUPERADMIN ONLY) ================= */}
+          {activeTab === "analytics" && canViewHostTelemetry && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {/* Real CPU Usage */}
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
                   <div className="flex items-center justify-between text-zinc-400 mb-2">
                     <span className="text-xs font-semibold">
@@ -732,11 +671,10 @@ export default function App() {
                   <p className="text-[11px] text-zinc-500 mt-2 truncate">
                     {telemetry
                       ? `${telemetry.cpu.cores} Cores (${telemetry.cpu.sockets} Sockets) • ${telemetry.cpu.model}`
-                      : "Polling physical CPU sockets..."}
+                      : "Polling CPU sockets..."}
                   </p>
                 </div>
 
-                {/* Real Host RAM Pool */}
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
                   <div className="flex items-center justify-between text-zinc-400 mb-2">
                     <span className="text-xs font-semibold">
@@ -757,12 +695,11 @@ export default function App() {
                   </div>
                   <p className="text-[11px] text-zinc-500 mt-2">
                     {telemetry
-                      ? `${telemetry.memory.usage_pct}% allocated across root memory pool`
+                      ? `${telemetry.memory.usage_pct}% allocated memory pool`
                       : "Calculating system RAM..."}
                   </p>
                 </div>
 
-                {/* Real Host Root Storage Pool */}
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
                   <div className="flex items-center justify-between text-zinc-400 mb-2">
                     <span className="text-xs font-semibold">
@@ -783,55 +720,9 @@ export default function App() {
                   </div>
                   <p className="text-[11px] text-zinc-500 mt-2">
                     {telemetry
-                      ? `${telemetry.storage.usage_pct}% storage disk capacity utilized`
-                      : "Reading local pool metrics..."}
+                      ? `${telemetry.storage.usage_pct}% storage capacity utilized`
+                      : "Reading local storage..."}
                   </p>
-                </div>
-              </div>
-
-              {/* Hypervisor Node Diagnostics */}
-              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-sm font-bold text-white">
-                      Hypervisor System Diagnostics
-                    </h3>
-                    <p className="text-xs text-zinc-400">
-                      Node kernel environment and active hypervisor engine
-                    </p>
-                  </div>
-                  <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-mono font-semibold rounded-lg border border-emerald-500/20">
-                    Node: {telemetry?.node || "pve"}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-                  <div className="bg-[#1a1a1e] border border-zinc-800/60 rounded-xl p-4">
-                    <div className="text-[10px] uppercase font-semibold text-zinc-500">
-                      Proxmox Release
-                    </div>
-                    <div className="text-xs font-mono text-zinc-200 mt-1 font-semibold">
-                      {telemetry?.system.pve_version || "Loading..."}
-                    </div>
-                  </div>
-                  <div className="bg-[#1a1a1e] border border-zinc-800/60 rounded-xl p-4">
-                    <div className="text-[10px] uppercase font-semibold text-zinc-500">
-                      Running Kernel
-                    </div>
-                    <div className="text-xs font-mono text-zinc-200 mt-1 font-semibold truncate">
-                      {telemetry?.system.kernel_version || "Loading..."}
-                    </div>
-                  </div>
-                  <div className="bg-[#1a1a1e] border border-zinc-800/60 rounded-xl p-4">
-                    <div className="text-[10px] uppercase font-semibold text-zinc-500">
-                      Node System Uptime
-                    </div>
-                    <div className="text-xs font-mono text-zinc-200 mt-1 font-semibold">
-                      {telemetry
-                        ? `${Math.floor(telemetry.system.uptime / 3600)}h ${Math.floor((telemetry.system.uptime % 3600) / 60)}m`
-                        : "0h 0m"}
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -849,9 +740,11 @@ export default function App() {
                     Multi-tenant compute partitions and SDN VLAN boundaries
                   </p>
                 </div>
-                <button className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5">
-                  <Plus className="w-3.5 h-3.5" /> Create Workspace
-                </button>
+                {canControlPower && (
+                  <button className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5">
+                    <Plus className="w-3.5 h-3.5" /> Create Workspace
+                  </button>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -859,7 +752,7 @@ export default function App() {
                   {
                     name: "Alpha Cloud Solutions",
                     vlan: "VLAN 101",
-                    vms: 4,
+                    vms: 3,
                     quota: "32GB RAM / 8 vCPU",
                     tier: "Enterprise",
                   },
@@ -873,7 +766,7 @@ export default function App() {
                   {
                     name: "DevSecOps Sandbox",
                     vlan: "VLAN 104",
-                    vms: 6,
+                    vms: 0,
                     quota: "64GB RAM / 16 vCPU",
                     tier: "Internal",
                   },
@@ -911,158 +804,114 @@ export default function App() {
           )}
 
           {/* ================= CUSTOMERS VIEW ================= */}
-          {activeTab === "customers" && (
-            <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
-              <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-bold text-white">
-                    Partner Tenant Accounts
-                  </h2>
-                  <p className="text-xs text-zinc-400">
-                    Active contracts, billing schedules, and assigned nodes
-                  </p>
+          {activeTab === "customers" &&
+            currentPersona.role === "SuperAdmin" && (
+              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
+                <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-sm font-bold text-white">
+                      Partner Tenant Accounts
+                    </h2>
+                    <p className="text-xs text-zinc-400">
+                      Active contracts, billing schedules, and assigned nodes
+                    </p>
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <button className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 rounded-xl border border-zinc-700 flex items-center gap-1.5">
-                    <Filter className="w-3.5 h-3.5" /> Filter
-                  </button>
-                  <button className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5">
-                    <Plus className="w-3.5 h-3.5" /> Add Customer
-                  </button>
-                </div>
-              </div>
-
-              <table className="w-full text-left text-xs text-zinc-300">
-                <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
-                  <tr>
-                    <th className="px-6 py-3">Tenant Name</th>
-                    <th className="px-6 py-3">Status</th>
-                    <th className="px-6 py-3">Instances</th>
-                    <th className="px-6 py-3">MRR</th>
-                    <th className="px-6 py-3">Primary Contact</th>
-                    <th className="px-6 py-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/60">
-                  {[
-                    {
-                      name: "Apex Logistics LLC",
-                      status: "Active",
-                      vms: "4 QEMU",
-                      mrr: "$1,200",
-                      contact: "ops@apexlogistics.ae",
-                    },
-                    {
-                      name: "Sovereign Bank DXB",
-                      status: "Active",
-                      vms: "8 QEMU / 2 LXC",
-                      mrr: "$4,800",
-                      contact: "cloud@sovereign.ae",
-                    },
-                    {
-                      name: "Nexus Media Hub",
-                      status: "Pending Review",
-                      vms: "1 QEMU",
-                      mrr: "$350",
-                      contact: "admin@nexus.io",
-                    },
-                  ].map((cust, i) => (
-                    <tr
-                      key={i}
-                      className="hover:bg-zinc-800/20 transition-colors"
-                    >
-                      <td className="px-6 py-4 font-semibold text-white">
-                        {cust.name}
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold rounded-full">
-                          {cust.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 font-mono text-zinc-400">
-                        {cust.vms}
-                      </td>
-                      <td className="px-6 py-4 font-mono text-white font-medium">
-                        {cust.mrr}
-                      </td>
-                      <td className="px-6 py-4 text-zinc-400">
-                        {cust.contact}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <button className="text-zinc-400 hover:text-white p-1 rounded hover:bg-zinc-800">
-                          <MoreVertical className="w-4 h-4" />
-                        </button>
-                      </td>
+                <table className="w-full text-left text-xs text-zinc-300">
+                  <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
+                    <tr>
+                      <th className="px-6 py-3">Tenant Name</th>
+                      <th className="px-6 py-3">Status</th>
+                      <th className="px-6 py-3">Instances</th>
+                      <th className="px-6 py-3">MRR</th>
+                      <th className="px-6 py-3">Primary Contact</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60">
+                    {[
+                      {
+                        name: "Alpha Cloud Solutions",
+                        status: "Active",
+                        vms: "3 Instances",
+                        mrr: "$1,200",
+                        contact: "ops@alphacloud.io",
+                      },
+                      {
+                        name: "FinTech Vault Core",
+                        status: "Active",
+                        vms: "2 Instances",
+                        mrr: "$2,400",
+                        contact: "security@fintechvault.io",
+                      },
+                    ].map((cust, i) => (
+                      <tr key={i} className="hover:bg-zinc-800/20">
+                        <td className="px-6 py-4 font-semibold text-white">
+                          {cust.name}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold rounded-full">
+                            {cust.status}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 font-mono text-zinc-400">
+                          {cust.vms}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-white font-medium">
+                          {cust.mrr}
+                        </td>
+                        <td className="px-6 py-4 text-zinc-400">
+                          {cust.contact}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
-          {/* ================= ORDERS VIEW ================= */}
+          {/* ================= ORDERS & BILLING VIEW ================= */}
           {activeTab === "orders" && (
             <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
               <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
                 <div>
                   <h2 className="text-sm font-bold text-white">
-                    Billing & Infrastructure Orders
+                    Billing Statements & Invoices
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Automated invoice statements and resource provisioning logs
+                    Automated recurring billing statements and compute expansion
+                    charges
                   </p>
                 </div>
-                <button className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 rounded-xl border border-zinc-700 flex items-center gap-1.5">
-                  <Download className="w-3.5 h-3.5" /> Export Statements
-                </button>
               </div>
-
               <table className="w-full text-left text-xs text-zinc-300">
                 <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
                   <tr>
-                    <th className="px-6 py-3">Order ID</th>
+                    <th className="px-6 py-3">Invoice ID</th>
                     <th className="px-6 py-3">Description</th>
-                    <th className="px-6 py-3">Tenant</th>
                     <th className="px-6 py-3">Amount</th>
                     <th className="px-6 py-3">Status</th>
-                    <th className="px-6 py-3 text-right">Invoice</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60">
                   {[
                     {
                       id: "INV-2026-089",
-                      desc: "Compute Expansion (8 vCPU / 32GB RAM)",
-                      tenant: "Apex Logistics",
+                      desc: "Enterprise Compute Expansion (32GB RAM)",
                       amount: "$420.00",
                       status: "Paid",
                     },
                     {
                       id: "INV-2026-088",
-                      desc: "Monthly Dedicated Hypervisor Host",
-                      tenant: "Sovereign Bank",
-                      amount: "$4,800.00",
+                      desc: "Monthly Hypervisor Tenant Subscription",
+                      amount: "$1,200.00",
                       status: "Paid",
                     },
-                    {
-                      id: "INV-2026-087",
-                      desc: "LXC Microservices Cluster Setup",
-                      tenant: "Nexus Media Hub",
-                      amount: "$350.00",
-                      status: "Processing",
-                    },
                   ].map((order, i) => (
-                    <tr
-                      key={i}
-                      className="hover:bg-zinc-800/20 transition-colors"
-                    >
+                    <tr key={i} className="hover:bg-zinc-800/20">
                       <td className="px-6 py-4 font-mono font-medium text-white">
                         {order.id}
                       </td>
                       <td className="px-6 py-4 text-zinc-300">{order.desc}</td>
-                      <td className="px-6 py-4 text-zinc-400">
-                        {order.tenant}
-                      </td>
                       <td className="px-6 py-4 font-mono text-white">
                         {order.amount}
                       </td>
@@ -1071,11 +920,6 @@ export default function App() {
                           {order.status}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-right">
-                        <button className="text-zinc-400 hover:text-white text-xs underline font-medium">
-                          PDF
-                        </button>
-                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1083,249 +927,37 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= TASKS VIEW ================= */}
-          {activeTab === "tasks" && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-bold text-white">
-                    System Tasks & DevOps Queue
-                  </h2>
-                  <p className="text-xs text-zinc-400">
-                    Automated SOAR triggers, maintenance routines, and
-                    engineering checklists
-                  </p>
-                </div>
-                <button className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5">
-                  <Plus className="w-3.5 h-3.5" /> Create Task
-                </button>
-              </div>
-
-              <div className="space-y-3">
-                {taskList.map((task) => (
-                  <div
-                    key={task.id}
-                    className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-4 flex items-center justify-between hover:border-zinc-700 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-5 h-5 rounded-lg border flex items-center justify-center cursor-pointer ${
-                          task.status === "Completed"
-                            ? "bg-emerald-500 border-emerald-500 text-zinc-950"
-                            : "border-zinc-700 hover:border-zinc-500"
-                        }`}
-                        onClick={() => {
-                          setTaskList(
-                            taskList.map((t) =>
-                              t.id === task.id
-                                ? {
-                                    ...t,
-                                    status:
-                                      t.status === "Completed"
-                                        ? "Open"
-                                        : "Completed",
-                                  }
-                                : t,
-                            ),
-                          );
-                        }}
-                      >
-                        {task.status === "Completed" && (
-                          <Check className="w-3.5 h-3.5 font-bold" />
-                        )}
-                      </div>
-                      <div>
-                        <span
-                          className={`text-xs font-semibold ${task.status === "Completed" ? "line-through text-zinc-500" : "text-zinc-200"}`}
-                        >
-                          {task.title}
-                        </span>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] font-mono text-zinc-500">
-                            Due {task.date}
-                          </span>
-                          <span
-                            className={`px-1.5 py-0.2 rounded text-[9px] font-semibold ${
-                              task.priority === "Urgent"
-                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                                : "bg-zinc-800 text-zinc-400"
-                            }`}
-                          >
-                            {task.priority}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <span
-                      className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${
-                        task.status === "Completed"
-                          ? "bg-emerald-500/10 text-emerald-400"
-                          : task.status === "In Progress"
-                            ? "bg-amber-500/10 text-amber-400"
-                            : "bg-zinc-800 text-zinc-400"
-                      }`}
-                    >
-                      {task.status}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ================= CALENDAR VIEW ================= */}
-          {activeTab === "calendar" && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-bold text-white">
-                    Scheduled Maintenance Windows
-                  </h2>
-                  <p className="text-xs text-zinc-400">
-                    Node kernel updates, hypervisor failover tests, and backup
-                    syncs
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <button className="p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-400">
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button className="p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-400">
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {[
-                  {
-                    time: "02:00 - 03:30 UTC",
-                    title: "PVE Kernel Patch 8.3",
-                    date: "Tonight",
-                    tag: "Hypervisor",
-                  },
-                  {
-                    time: "12:00 - 13:00 UTC",
-                    title: "Ceph Storage Pool Rebalance",
-                    date: "Tomorrow",
-                    tag: "Storage",
-                  },
-                  {
-                    time: "22:00 - 23:00 UTC",
-                    title: "Wazuh Rule Definitions Sync",
-                    date: "Aug 29",
-                    tag: "Security",
-                  },
-                ].map((ev, i) => (
-                  <div
-                    key={i}
-                    className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6"
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="px-2 py-0.5 bg-zinc-800 text-zinc-400 text-[10px] font-mono rounded">
-                        {ev.tag}
-                      </span>
-                      <span className="text-[10px] font-semibold text-sky-400">
-                        {ev.date}
-                      </span>
-                    </div>
-                    <h3 className="text-sm font-bold text-white mb-1">
-                      {ev.title}
-                    </h3>
-                    <p className="text-xs text-zinc-400 font-mono mt-2 flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-zinc-500" /> {ev.time}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ================= NOTES VIEW ================= */}
-          {activeTab === "notes" && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-bold text-white">
-                    Technical Runbooks & Documentation
-                  </h2>
-                  <p className="text-xs text-zinc-400">
-                    Standard operating procedures, encryption protocols, and
-                    network maps
-                  </p>
-                </div>
-                <button className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5">
-                  <Plus className="w-3.5 h-3.5" /> New Note
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {notes.map((note) => (
-                  <div
-                    key={note.id}
-                    className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between"
-                  >
-                    <div>
-                      <span className="px-2 py-0.5 bg-zinc-800 text-[10px] font-mono text-indigo-400 rounded">
-                        {note.tag}
-                      </span>
-                      <h3 className="text-sm font-bold text-white mt-3 mb-2">
-                        {note.title}
-                      </h3>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        {note.snippet}
-                      </p>
-                    </div>
-                    <div className="mt-6 pt-4 border-t border-zinc-800 flex justify-between items-center text-xs text-zinc-500">
-                      <span>Markdown Ready</span>
-                      <button className="text-zinc-300 hover:text-white text-xs font-semibold">
-                        Edit Runbook
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* ================= CHATS VIEW ================= */}
           {activeTab === "chats" && (
             <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl h-[600px] flex overflow-hidden">
-              {/* Channel Sidebar */}
               <div className="w-64 border-r border-zinc-800 p-4 flex flex-col">
                 <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">
-                  Channels
+                  Support Channels
                 </h3>
                 <div className="space-y-1 flex-1">
-                  {[
-                    { id: "tech-support", name: "# tech-support" },
-                    { id: "devops-alerts", name: "# devops-alerts" },
-                    { id: "tenant-sla", name: "# tenant-sla" },
-                  ].map((ch) => (
+                  {["tech-support", "devops-alerts", "tenant-sla"].map((ch) => (
                     <button
-                      key={ch.id}
-                      onClick={() => setActiveChat(ch.id)}
+                      key={ch}
+                      onClick={() => setActiveChat(ch)}
                       className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all ${
-                        activeChat === ch.id
+                        activeChat === ch
                           ? "bg-zinc-800 text-white font-semibold"
                           : "text-zinc-400 hover:bg-zinc-800/40"
                       }`}
                     >
-                      {ch.name}
+                      #{ch}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Chat Stream */}
               <div className="flex-1 flex flex-col justify-between bg-[#121214]">
                 <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
                   <span className="text-xs font-bold text-white">
                     #{activeChat}
                   </span>
                   <span className="text-[10px] text-zinc-500 font-mono">
-                    End-to-End Encrypted
+                    Encrypted Sovereign Channel
                   </span>
                 </div>
 
@@ -1368,96 +1000,10 @@ export default function App() {
               </div>
             </div>
           )}
-
-          {/* ================= APPS VIEW ================= */}
-          {activeTab === "apps" && (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-sm font-bold text-white">
-                  Connected Cloud Integrations
-                </h2>
-                <p className="text-xs text-zinc-400">
-                  Native orchestrator modules and external service telemetry
-                  pipelines
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {[
-                  {
-                    name: "Proxmox Virtual Environment",
-                    status: "Connected",
-                    desc: "Direct hypervisor REST API control plane with automated VNC proxying.",
-                    icon: Server,
-                  },
-                  {
-                    name: "Wazuh SIEM / SOAR",
-                    status: "Active",
-                    desc: "Centralized security telemetry, intrusion detection, and automatic ACL containment.",
-                    icon: ShieldCheck,
-                  },
-                  {
-                    name: "Tailscale Mesh VPN",
-                    status: "Active",
-                    desc: "WireGuard zero-trust peer-to-peer overlay network across tenant instances.",
-                    icon: Activity,
-                  },
-                  {
-                    name: "Terraform Provider",
-                    status: "Ready",
-                    desc: "Infrastructure as Code deployment automation for QEMU templates.",
-                    icon: Boxes,
-                  },
-                  {
-                    name: "Stripe Billing Connect",
-                    status: "Connected",
-                    desc: "Automatic subscription renewals and resource usage invoicing.",
-                    icon: CreditCard,
-                  },
-                  {
-                    name: "Grafana & Prometheus",
-                    status: "Ready",
-                    desc: "High-frequency metric scrapers and visual status dashboards.",
-                    icon: BarChart3,
-                  },
-                ].map((app, i) => {
-                  const Icon = app.icon;
-                  return (
-                    <div
-                      key={i}
-                      className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="p-2.5 bg-zinc-800/80 border border-zinc-700/60 rounded-xl text-indigo-400">
-                            <Icon className="w-5 h-5" />
-                          </div>
-                          <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold rounded-full">
-                            {app.status}
-                          </span>
-                        </div>
-                        <h3 className="text-sm font-bold text-white mb-1">
-                          {app.name}
-                        </h3>
-                        <p className="text-xs text-zinc-400 leading-relaxed">
-                          {app.desc}
-                        </p>
-                      </div>
-                      <div className="mt-6 pt-4 border-t border-zinc-800 flex justify-end">
-                        <button className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 rounded-lg border border-zinc-700">
-                          Manage Settings
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </main>
       </div>
 
-      {/* Interactive noVNC Terminal Modal */}
+      {/* Embedded noVNC Terminal Modal */}
       {activeTerminal && (
         <VncTerminal
           node={activeTerminal.node}

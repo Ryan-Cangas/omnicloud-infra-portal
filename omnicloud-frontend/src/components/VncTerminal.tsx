@@ -1,13 +1,3 @@
-/**
- * Interactive noVNC Terminal Modal Component.
- *
- * Mechanics:
- * - Fetches ephemeral VNC ticket and root session credentials from FastAPI backend.
- * - Instantiates @novnc/novnc RFB client canvas attached directly to a DOM ref.
- * - Debounces disconnect events (1.5s grace period) to eliminate false-positive handshake warnings.
- * - Implements strict component unmount lifecycle cleanup to prevent ghost WebSocket sockets.
- */
-
 import { useEffect, useRef, useState } from "react";
 // @ts-ignore
 import RFB from "@novnc/novnc";
@@ -18,6 +8,9 @@ interface VncTerminalProps {
   vmType: "qemu" | "lxc";
   vmid: number;
   vmName: string;
+  userRole?: string;
+  userId?: string;
+  tenantId?: string;
   onClose: () => void;
 }
 
@@ -26,12 +19,15 @@ export function VncTerminal({
   vmType,
   vmid,
   vmName,
+  userRole = "SuperAdmin",
+  userId = "admin-01",
+  tenantId = "global",
   onClose,
 }: VncTerminalProps) {
-  // DOM element reference to mount the RFB canvas viewport[cite: 3]
+  // DOM element reference to attach the HTML5 canvas viewport[cite: 3]
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Persistent reference to the active RFB client instance[cite: 3]
+  // Persistent reference to the active RFB instance[cite: 3]
   const rfbRef = useRef<any>(null);
 
   // Debounce timer ID used to suppress connection handshake drop alerts[cite: 3]
@@ -44,7 +40,7 @@ export function VncTerminal({
   const [errorMessage, setErrorMessage] = useState<string>("");
 
   /**
-   * Clears any active debounce timer to prevent stale disconnect state transitions.
+   * Clears any active debounce timer to prevent stale disconnect transitions.
    */
   const clearDisconnectTimer = () => {
     if (disconnectTimerRef.current !== null) {
@@ -54,12 +50,12 @@ export function VncTerminal({
   };
 
   /**
-   * Initializes the noVNC session by acquiring tickets from FastAPI and streaming RFB packets.
+   * Acquires credentials from FastAPI and initializes the @novnc/novnc RFB engine.
    */
   const connectVnc = async () => {
     clearDisconnectTimer();
 
-    // Teardown existing RFB instance before instantiating a new one[cite: 3]
+    // Teardown existing instance before reconnecting[cite: 3]
     if (rfbRef.current) {
       try {
         rfbRef.current.disconnect();
@@ -71,41 +67,52 @@ export function VncTerminal({
     setErrorMessage("");
 
     try {
-      // Step 1: Request ephemeral ticket and session cookie from backend[cite: 3]
+      // Step 1: Request ephemeral ticket and session cookie with RBAC identity headers
       const res = await fetch(
         `http://localhost:8000/api/v1/nodes/${node}/${vmType}/${vmid}/vncproxy`,
-        { method: "POST" },
+        {
+          method: "POST",
+          headers: {
+            "X-User-Id": userId,
+            "X-User-Role": userRole,
+            "X-Tenant-Id": tenantId,
+          },
+        },
       );
-      if (!res.ok)
-        throw new Error("Backend rejected VNC ticket generation request.");
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(
+          errJson.detail || "Backend rejected VNC ticket generation request.",
+        );
+      }
+
       const data = await res.json();
 
       if (!containerRef.current) return;
       containerRef.current.innerHTML = "";
 
-      // Step 2: Construct WebSocket URL pointing to FastAPI reverse proxy[cite: 3]
-      const encodedTicket = encodeURIComponent(data.ticket);
-      const encodedSession = encodeURIComponent(data.session_ticket);
-      const wsUrl = `ws://localhost:8000/api/v1/ws/vnc/${node}/${vmType}/${vmid}?port=${data.port}&ticket=${encodedTicket}&session_ticket=${encodedSession}`;
+      // Step 2: Construct WebSocket reverse proxy URL[cite: 3]
+      const wsUrl = `ws://localhost:8000/api/v1/ws/vnc/${node}/${vmType}/${vmid}?port=${data.port}&ticket=${encodeURIComponent(data.ticket)}&session_ticket=${encodeURIComponent(data.session_ticket)}`;
 
-      // Step 3: Initialize @novnc/novnc RFB client engine[cite: 3]
+      // Step 3: Instantiate @novnc/novnc RFB client[cite: 3]
       const rfb = new RFB(containerRef.current, wsUrl, {
         wsProtocols: ["binary"],
         credentials: { password: data.ticket },
       });
 
-      // Enable responsive canvas scaling to fit container modal[cite: 3]
+      // Enable dynamic canvas scaling[cite: 3]
       rfb.scaleViewport = true;
       rfb.resizeSession = true;
 
-      // Event Listener: Successful RFB Handshake & Connection[cite: 3]
+      // Event: RFB Handshake Success[cite: 3]
       rfb.addEventListener("connect", () => {
         clearDisconnectTimer();
         setStatus("connected");
         setErrorMessage("");
       });
 
-      // Event Listener: Disconnection with 1.5s grace period debounce[cite: 3]
+      // Event: Disconnection with 2-second grace period debounce[cite: 3]
       rfb.addEventListener("disconnect", (e: any) => {
         clearDisconnectTimer();
         disconnectTimerRef.current = window.setTimeout(() => {
@@ -115,7 +122,7 @@ export function VncTerminal({
               "WebSocket connection dropped or host is unreachable. Ensure the guest instance is running.",
             );
           }
-        }, 1500);
+        }, 2000);
       });
 
       rfbRef.current = rfb;

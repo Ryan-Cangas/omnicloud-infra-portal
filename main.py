@@ -1,45 +1,35 @@
-"""
-Sovereign Cloud Management Platform (CMP) & Proxmox Hypervisor Control Plane.
-
-Architectural Overview:
-1. Multi-Tenant RBAC: Custom user context headers parse caller identity, role, and tenant scopes.
-2. Direct Proxmox Hypervisor Integration: Interacts with Proxmox VE REST API via proxmoxer.
-3. Bidirectional RFB WebSocket Proxy: Manages out-of-band noVNC binary streaming to eliminate 
-   client-side self-signed SSL friction and CORS restrictions.
-"""
-
 import os
 import ssl
 import json
 import asyncio
+import inspect
+import urllib.parse
 from typing import Optional, List
 import requests
 import urllib3
-import urllib.parse
-import inspect
 import websockets
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from proxmoxer import ProxmoxAPI
 from dotenv import load_dotenv
 
-# Suppress self-signed certificate warnings from internal hypervisor management network
+# Suppress TLS verification warnings for internal self-signed Proxmox certificates[cite: 1, 4]
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 load_dotenv()
 
-# Hypervisor connection configurations
+# Hypervisor Node & Credentials Configuration[cite: 1, 4]
 PROXMOX_HOST = os.getenv("PROXMOX_HOST", "192.168.1.200")
 PROXMOX_USER = os.getenv("PROXMOX_USER", "root@pam")
 PROXMOX_PASSWORD = os.getenv("PROXMOX_PASSWORD", "password")
 
-# Initialize FastAPI Application
+# Initialize FastAPI Application[cite: 1, 4]
 app = FastAPI(
-    title="Sovereign Cloud CMP & RBAC Control Plane",
+    title="Sovereign Cloud CMP & Hypervisor Proxy Engine",
     description="Multi-tenant cloud management control plane with isolated hypervisor proxies.",
     version="1.0.0"
 )
 
-# Cross-Origin Resource Sharing (CORS) setup for local dev Vite environment
+# Cross-Origin Resource Sharing (CORS) Middleware for local Vite development[cite: 1, 4]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -48,7 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Persistent Proxmox API Client Instance for control-plane queries
+# Persistent Proxmox API Client for state inspection and lifecycle calls[cite: 1, 4]
 proxmox = ProxmoxAPI(
     PROXMOX_HOST,
     user=PROXMOX_USER,
@@ -57,10 +47,10 @@ proxmox = ProxmoxAPI(
 )
 
 # ---------------------------------------------------------------------------
-# Multi-Tenant RBAC & Authorization Schema
+# Multi-Tenant RBAC Data Models & Context Dependency
 # ---------------------------------------------------------------------------
 
-# Mock tenant-to-VM mapping partition (In production, map to Postgres or sovereign tenant DB)
+# Static mapping simulating tenant partition allocations (To be backed by DB in production)
 TENANT_VM_MAP = {
     "tenant-alpha": [100, 101, 102],
     "tenant-fintech": [103, 104],
@@ -68,7 +58,7 @@ TENANT_VM_MAP = {
 
 class UserContext:
     """
-    Encapsulates caller identity, RBAC role, and tenant boundary.
+    Encapsulates identity metadata and role boundaries for the active caller.
     Roles:
       - SuperAdmin: Global MSP cluster access across all nodes and VMs.
       - TenantAdmin: Full VM power and noVNC console access for assigned tenant VMs.
@@ -86,8 +76,7 @@ def get_current_user(
     x_tenant_id: Optional[str] = Header("global", description="Caller Tenant Partition ID")
 ) -> UserContext:
     """
-    Dependency injection extractor that validates incoming RBAC headers.
-    Enforces role integrity before handing execution to API route handlers.
+    FastAPI dependency that parses and validates RBAC persona headers on protected routes.
     """
     valid_roles = ["SuperAdmin", "TenantAdmin", "TenantViewer", "BillingManager"]
     if x_user_role not in valid_roles:
@@ -97,7 +86,7 @@ def get_current_user(
 def enforce_vm_access(vmid: int, user: UserContext, required_action: str = "view"):
     """
     Enforces isolation boundaries between tenants and role capabilities.
-    Prevents cross-tenant parameter tampering and unauthorized actions.
+    Blocks cross-tenant unauthorized resource manipulation.
     """
     # 1. Billing Managers have zero access to hypervisor compute workloads
     if user.role == "BillingManager":
@@ -127,8 +116,8 @@ def enforce_vm_access(vmid: int, user: UserContext, required_action: str = "view
 
 def get_pve_auth_session():
     """
-    Obtains an authenticated PVEAuthCookie and CSRF token from Proxmox.
-    Required because Proxmox API Tokens cannot issue /vncproxy tickets.
+    Generates an ephemeral PVEAuthCookie and CSRF token from Proxmox.
+    Required for noVNC proxy authorization since API Tokens cannot issue /vncproxy tickets.
     """
     url = f"https://{PROXMOX_HOST}:8006/api2/json/access/ticket"
     resp = requests.post(
@@ -143,31 +132,31 @@ def get_pve_auth_session():
     return data["ticket"], data["CSRFPreventionToken"]
 
 # ---------------------------------------------------------------------------
-# Control Plane API Routes
+# API Route Controllers
 # ---------------------------------------------------------------------------
 
 @app.get("/api/v1/cluster/resources")
 def get_cluster_inventory(user: UserContext = Depends(get_current_user)):
     """
-    Fetches cluster guest inventory (QEMU & LXC), filtering results strictly by tenant RBAC.
+    Fetches guest VM and LXC inventory, applying tenant filtering and usage percentage clamps[cite: 1, 4].
     """
     if user.role == "BillingManager":
         return []
 
     try:
-        resources = proxmox.cluster.resources.get(type="vm")
+        resources = proxmox.cluster.resources.get(type="vm")[cite: 1, 4]
         allowed_vmids = TENANT_VM_MAP.get(user.tenant_id, [])
 
         filtered = []
         for item in resources:
             vmid = item.get("vmid")
             
-            # Non-SuperAdmins can only see VMs explicitly mapped to their tenant ID
+            # Non-SuperAdmins can only see instances inside their assigned tenant pool
             if user.role != "SuperAdmin" and vmid not in allowed_vmids:
                 continue
 
-            maxmem_gb = round(item.get("maxmem", 0) / (1024**3), 2)
-            # Clamp percentage between 0.0% and 100.0% to guard against memory ballooning anomalies
+            maxmem_gb = round(item.get("maxmem", 0) / (1024**3), 2)[cite: 1, 4]
+            # Clamp percentage strictly between 0.0% and 100.0% to prevent ballooning artifacts
             mem_pct = round(min(max((item.get("mem", 0) / max(item.get("maxmem", 1), 1)) * 100, 0.0), 100.0), 2)
             cpu_pct = round(min(max(item.get("cpu", 0) * 100, 0.0), 100.0), 2)
 
@@ -195,14 +184,13 @@ def control_vm_power(
     user: UserContext = Depends(get_current_user)
 ):
     """
-    Executes guest lifecycle power actions (start, shutdown, stop, reset).
-    Guarded by tenant isolation checks.
+    Triggers power state changes (start, shutdown, stop, reset) with tenant RBAC enforcement[cite: 1, 4].
     """
     enforce_vm_access(vmid, user, required_action="power")
     try:
-        node_controller = getattr(proxmox.nodes(node), vm_type)(vmid)
-        status_controller = getattr(node_controller.status, action)
-        upid = status_controller.post()
+        node_controller = getattr(proxmox.nodes(node), vm_type)(vmid)[cite: 1, 4]
+        status_controller = getattr(node_controller.status, action)[cite: 1, 4]
+        upid = status_controller.post()[cite: 1, 4]
         return {
             "status": "success", 
             "action": action, 
@@ -221,17 +209,16 @@ def generate_vnc_proxy_ticket(
     user: UserContext = Depends(get_current_user)
 ):
     """
-    Acquires an ephemeral VNC proxy ticket from Proxmox on behalf of an authorized user[cite: 4].
-    Forwards root session authentication tokens necessary for WebSocket tunneling.
+    Requests a short-lived VNC ticket and port assignment from Proxmox for out-of-band console access[cite: 4].
     """
     enforce_vm_access(vmid, user, required_action="console")
     try:
         session_ticket, csrf_token = get_pve_auth_session()
-        url = f"https://{PROXMOX_HOST}:8006/api2/json/nodes/{node}/{vm_type}/{vmid}/vncproxy"
+        url = f"https://{PROXMOX_HOST}:8006/api2/json/nodes/{node}/{vm_type}/{vmid}/vncproxy"[cite: 4]
         headers = {"CSRFPreventionToken": csrf_token}
         cookies = {"PVEAuthCookie": session_ticket}
         
-        resp = requests.post(url, headers=headers, cookies=cookies, data={"websocket": 1}, verify=False, timeout=10)
+        resp = requests.post(url, headers=headers, cookies=cookies, data={"websocket": 1}, verify=False, timeout=10)[cite: 4]
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail="Proxmox refused VNC ticket request")
             
@@ -248,8 +235,8 @@ def generate_vnc_proxy_ticket(
 @app.get("/api/v1/nodes/telemetry")
 def get_node_telemetry(user: UserContext = Depends(get_current_user)):
     """
-    Retrieves live bare-metal host telemetry (CPU, RAM, storage pools, uptime).
-    Strictly restricted to SuperAdmin role.
+    Retrieves real bare-metal compute statistics (CPU, RAM, Rootfs storage, uptime).
+    Protected exclusively for SuperAdmin roles.
     """
     if user.role != "SuperAdmin":
         raise HTTPException(status_code=403, detail="Host telemetry access restricted to SuperAdmin.")
@@ -302,9 +289,15 @@ async def vnc_websocket_proxy(
     ticket: str,
     session_ticket: str,
 ):
+    """
+    Asynchronous RFB reverse-proxy tunnel.
+    Bridges the browser-side noVNC binary stream to Proxmox's internal `vncwebsocket` daemon.
+    Uses dynamic parameter introspection to remain compatible across all versions of `websockets`.
+    """
+    # Accept client WebSocket subprotocol immediately[cite: 4]
     await websocket.accept(subprotocol="binary")
     
-    # Safely decode parameters if they arrived URL-encoded
+    # Decode in case URL params arrived encoded, then safely encode once for Proxmox upstream query
     raw_ticket = urllib.parse.unquote(ticket)
     raw_session = urllib.parse.unquote(session_ticket)
     encoded_vncticket = urllib.parse.quote(raw_ticket, safe="")
@@ -314,10 +307,11 @@ async def vnc_websocket_proxy(
         f"?port={port}&vncticket={encoded_vncticket}"
     )
     
+    # Disable SSL verification for internal hypervisor bridge[cite: 4]
     ssl_context = ssl._create_unverified_context()
     headers_dict = {"Cookie": f"PVEAuthCookie={raw_session}"}
 
-    # Inspect websockets.connect signature to handle API version differences
+    # Introspect websockets.connect parameter signature to prevent BaseEventLoop keyword leaks
     sig = inspect.signature(websockets.connect)
     connect_kwargs = {
         "subprotocols": ["binary"],
@@ -333,7 +327,10 @@ async def vnc_websocket_proxy(
         connect_kwargs["additional_headers"] = headers_dict
 
     try:
+        # Establish upstream connection to Proxmox[cite: 4]
         async with websockets.connect(pve_ws_url, **connect_kwargs) as pve_ws:
+
+            # Task 1: Stream client keyboard/mouse RFB events to Proxmox[cite: 4]
             async def client_to_pve():
                 try:
                     while True:
@@ -342,16 +339,19 @@ async def vnc_websocket_proxy(
                 except (WebSocketDisconnect, Exception):
                     pass
 
+            # Task 2: Stream framebuffer binary updates from Proxmox to client[cite: 4]
             async def pve_to_client():
                 try:
                     async for message in pve_ws:
                         if isinstance(message, str):
+                            # Convert initial RFB greeting handshake string to latin-1 bytes[cite: 4]
                             await websocket.send_bytes(message.encode("latin-1"))
                         else:
                             await websocket.send_bytes(message)
                 except Exception:
                     pass
 
+            # Concurrently execute bidirectional stream tasks[cite: 4]
             await asyncio.gather(client_to_pve(), pve_to_client())
     except Exception as e:
         print(f"[WebSocket Proxy Error]: {e}")

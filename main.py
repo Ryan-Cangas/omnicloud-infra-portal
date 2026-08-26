@@ -216,4 +216,67 @@ def get_pve_ticket():
             return res.json()["data"]["ticket"]
     except Exception:
         pass
-    return None
+    return 
+
+@app.get("/api/v1/nodes/telemetry")
+def get_node_telemetry():
+    try:
+        nodes = proxmox.nodes.get()
+        if not nodes:
+            raise HTTPException(status_code=404, detail="No Proxmox nodes discovered")
+
+        primary_node_name = nodes[0].get("node")
+        status = proxmox.nodes(primary_node_name).status.get()
+
+        # Host CPU statistics
+        cpu_info = status.get("cpuinfo", {})
+        cpu_usage_pct = round(min(max(status.get("cpu", 0) * 100, 0.0), 100.0), 2)
+        total_cpus = cpu_info.get("cpus", status.get("cpus", 0))
+        cpu_model = cpu_info.get("model", "Physical x86_64 Cores")
+        sockets = cpu_info.get("sockets", 1)
+
+        # Host RAM statistics (convert bytes to GB)
+        memory = status.get("memory", {})
+        mem_used_bytes = memory.get("used", 0)
+        mem_total_bytes = memory.get("total", 1)
+        mem_used_gb = round(mem_used_bytes / (1024**3), 2)
+        mem_total_gb = round(mem_total_bytes / (1024**3), 2)
+        mem_usage_pct = round(min(max((mem_used_bytes / max(mem_total_bytes, 1)) * 100, 0.0), 100.0), 2)
+
+        # Host Root Storage Pool statistics
+        root_fs = status.get("rootfs", {})
+        disk_used_gb = round(root_fs.get("used", 0) / (1024**3), 2)
+        disk_total_gb = round(root_fs.get("total", 1) / (1024**3), 2)
+        disk_usage_pct = round(min(max((root_fs.get("used", 0) / max(root_fs.get("total", 1), 1)) * 100, 0.0), 100.0), 2)
+
+        # Host Kernel & PVE Release
+        pve_version = status.get("pveversion", "Proxmox VE")
+        kernel_version = status.get("kversion", "Linux")
+        uptime_seconds = status.get("uptime", 0)
+
+        return {
+            "node": primary_node_name,
+            "cpu": {
+                "usage_pct": cpu_usage_pct,
+                "cores": total_cpus,
+                "sockets": sockets,
+                "model": cpu_model,
+            },
+            "memory": {
+                "used_gb": mem_used_gb,
+                "total_gb": mem_total_gb,
+                "usage_pct": mem_usage_pct,
+            },
+            "storage": {
+                "used_gb": disk_used_gb,
+                "total_gb": disk_total_gb,
+                "usage_pct": disk_usage_pct,
+            },
+            "system": {
+                "pve_version": pve_version,
+                "kernel_version": kernel_version,
+                "uptime": uptime_seconds,
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch node telemetry: {str(e)}")

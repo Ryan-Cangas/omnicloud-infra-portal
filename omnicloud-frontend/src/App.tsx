@@ -52,6 +52,31 @@ interface GuestResource {
   cpu_usage_pct: number;
 }
 
+interface NodeTelemetry {
+  node: string;
+  cpu: {
+    usage_pct: number;
+    cores: number;
+    sockets: number;
+    model: string;
+  };
+  memory: {
+    used_gb: number;
+    total_gb: number;
+    usage_pct: number;
+  };
+  storage: {
+    used_gb: number;
+    total_gb: number;
+    usage_pct: number;
+  };
+  system: {
+    pve_version: string;
+    kernel_version: string;
+    uptime: number;
+  };
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<
     | "overview"
@@ -79,6 +104,31 @@ export default function App() {
     vmid: number;
     vmName: string;
   } | null>(null);
+
+  // Node Telemetry State
+  const [telemetry, setTelemetry] = useState<NodeTelemetry | null>(null);
+
+  const fetchTelemetry = async () => {
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/nodes/telemetry");
+      if (res.ok) {
+        const data = await res.json();
+        setTelemetry(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch telemetry:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchResources();
+    fetchTelemetry();
+    const interval = setInterval(() => {
+      fetchResources();
+      fetchTelemetry();
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Messaging state
   const [activeChat, setActiveChat] = useState("tech-support");
@@ -662,6 +712,7 @@ export default function App() {
           {activeTab === "analytics" && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Real CPU Usage */}
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
                   <div className="flex items-center justify-between text-zinc-400 mb-2">
                     <span className="text-xs font-semibold">
@@ -670,72 +721,117 @@ export default function App() {
                     <Cpu className="w-4 h-4 text-indigo-400" />
                   </div>
                   <div className="text-2xl font-bold text-white font-mono">
-                    14.2%
+                    {telemetry ? `${telemetry.cpu.usage_pct}%` : "---"}
                   </div>
                   <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-4 overflow-hidden">
                     <div
-                      className="bg-indigo-500 h-full"
-                      style={{ width: "14.2%" }}
+                      className="bg-indigo-500 h-full transition-all duration-500"
+                      style={{ width: `${telemetry?.cpu.usage_pct || 0}%` }}
                     ></div>
                   </div>
-                  <p className="text-[11px] text-zinc-500 mt-2">
-                    16 Cores allocated across 2 physical sockets
+                  <p className="text-[11px] text-zinc-500 mt-2 truncate">
+                    {telemetry
+                      ? `${telemetry.cpu.cores} Cores (${telemetry.cpu.sockets} Sockets) • ${telemetry.cpu.model}`
+                      : "Polling physical CPU sockets..."}
                   </p>
                 </div>
 
+                {/* Real Host RAM Pool */}
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
                   <div className="flex items-center justify-between text-zinc-400 mb-2">
                     <span className="text-xs font-semibold">
-                      Provisioned RAM
+                      Host Physical RAM
                     </span>
                     <HardDrive className="w-4 h-4 text-emerald-400" />
                   </div>
                   <div className="text-2xl font-bold text-white font-mono">
-                    24.5 / 64 GB
+                    {telemetry
+                      ? `${telemetry.memory.used_gb} / ${telemetry.memory.total_gb} GB`
+                      : "---"}
                   </div>
                   <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-4 overflow-hidden">
                     <div
-                      className="bg-emerald-500 h-full"
-                      style={{ width: "38%" }}
+                      className="bg-emerald-500 h-full transition-all duration-500"
+                      style={{ width: `${telemetry?.memory.usage_pct || 0}%` }}
                     ></div>
                   </div>
                   <p className="text-[11px] text-zinc-500 mt-2">
-                    38% total physical pool utilization
+                    {telemetry
+                      ? `${telemetry.memory.usage_pct}% allocated across root memory pool`
+                      : "Calculating system RAM..."}
                   </p>
                 </div>
 
+                {/* Real Host Root Storage Pool */}
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
                   <div className="flex items-center justify-between text-zinc-400 mb-2">
                     <span className="text-xs font-semibold">
-                      Network I/O Throughput
+                      Local Rootfs Storage
                     </span>
                     <Activity className="w-4 h-4 text-sky-400" />
                   </div>
                   <div className="text-2xl font-bold text-white font-mono">
-                    1.2 Gbps
+                    {telemetry
+                      ? `${telemetry.storage.used_gb} / ${telemetry.storage.total_gb} GB`
+                      : "---"}
                   </div>
                   <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-4 overflow-hidden">
                     <div
-                      className="bg-sky-500 h-full"
-                      style={{ width: "60%" }}
+                      className="bg-sky-500 h-full transition-all duration-500"
+                      style={{ width: `${telemetry?.storage.usage_pct || 0}%` }}
                     ></div>
                   </div>
                   <p className="text-[11px] text-zinc-500 mt-2">
-                    Zero packet drop rate across vmbr0 bridge
+                    {telemetry
+                      ? `${telemetry.storage.usage_pct}% storage disk capacity utilized`
+                      : "Reading local pool metrics..."}
                   </p>
                 </div>
               </div>
 
+              {/* Hypervisor Node Diagnostics */}
               <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
-                <h3 className="text-sm font-bold text-white mb-1">
-                  Hypervisor Ingress Telemetry
-                </h3>
-                <p className="text-xs text-zinc-400 mb-6">
-                  Historical load metrics sampled every 60 seconds
-                </p>
-                <div className="h-48 border border-dashed border-zinc-800 rounded-xl flex items-center justify-center text-xs text-zinc-500 font-mono">
-                  [ Live Telemetry Chart Pipeline Active: Prometheus /
-                  OpenObserve Engine ]
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-white">
+                      Hypervisor System Diagnostics
+                    </h3>
+                    <p className="text-xs text-zinc-400">
+                      Node kernel environment and active hypervisor engine
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-mono font-semibold rounded-lg border border-emerald-500/20">
+                    Node: {telemetry?.node || "pve"}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                  <div className="bg-[#1a1a1e] border border-zinc-800/60 rounded-xl p-4">
+                    <div className="text-[10px] uppercase font-semibold text-zinc-500">
+                      Proxmox Release
+                    </div>
+                    <div className="text-xs font-mono text-zinc-200 mt-1 font-semibold">
+                      {telemetry?.system.pve_version || "Loading..."}
+                    </div>
+                  </div>
+                  <div className="bg-[#1a1a1e] border border-zinc-800/60 rounded-xl p-4">
+                    <div className="text-[10px] uppercase font-semibold text-zinc-500">
+                      Running Kernel
+                    </div>
+                    <div className="text-xs font-mono text-zinc-200 mt-1 font-semibold truncate">
+                      {telemetry?.system.kernel_version || "Loading..."}
+                    </div>
+                  </div>
+                  <div className="bg-[#1a1a1e] border border-zinc-800/60 rounded-xl p-4">
+                    <div className="text-[10px] uppercase font-semibold text-zinc-500">
+                      Node System Uptime
+                    </div>
+                    <div className="text-xs font-mono text-zinc-200 mt-1 font-semibold">
+                      {telemetry
+                        ? `${Math.floor(telemetry.system.uptime / 3600)}h ${Math.floor((telemetry.system.uptime % 3600) / 60)}m`
+                        : "0h 0m"}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

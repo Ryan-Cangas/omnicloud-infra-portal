@@ -26,34 +26,41 @@ export function VncTerminal({
   const [errorMessage, setErrorMessage] = useState<string>("");
 
   const connectVnc = async () => {
+    if (rfbRef.current) {
+      try {
+        rfbRef.current.disconnect();
+      } catch (e) {}
+      rfbRef.current = null;
+    }
+
     setStatus("connecting");
     setErrorMessage("");
 
     try {
-      // 1. Request ticket from FastAPI backend
+      // Fetch ticket and session from backend
       const res = await fetch(
         `http://localhost:8000/api/v1/nodes/${node}/${vmType}/${vmid}/vncproxy`,
-        {
-          method: "POST",
-        },
+        { method: "POST" },
       );
-      if (!res.ok) throw new Error("Failed to obtain VNC ticket from backend");
+      if (!res.ok) throw new Error("Failed to obtain VNC ticket");
       const data = await res.json();
 
       if (!containerRef.current) return;
       containerRef.current.innerHTML = "";
 
-      // 2. Build Proxmox WebSocket URL
+      // Pass both ticket and session_ticket to FastAPI WebSocket proxy
       const encodedTicket = encodeURIComponent(data.ticket);
-      const wsUrl = `wss://${data.pve_host}:8006/api2/json/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${data.port}&vncticket=${encodedTicket}`;
+      const encodedSession = encodeURIComponent(data.session_ticket);
+      const wsUrl = `ws://localhost:8000/api/v1/ws/vnc/${node}/${vmType}/${vmid}?port=${data.port}&ticket=${encodedTicket}&session_ticket=${encodedSession}`;
 
-      // 3. Initialize RFB client
+      // Initialize RFB with credentials from .env file
       const rfb = new RFB(containerRef.current, wsUrl, {
+        wsProtocols: ["binary"],
         credentials: { password: data.ticket },
       });
 
       rfb.scaleViewport = true;
-      rfb.resizeSession = false;
+      rfb.resizeSession = true;
 
       rfb.addEventListener("connect", () => {
         setStatus("connected");
@@ -62,9 +69,7 @@ export function VncTerminal({
       rfb.addEventListener("disconnect", (e: any) => {
         setStatus("disconnected");
         if (e.detail?.clean === false) {
-          setErrorMessage(
-            "Disconnected unexpectedly. (Self-signed certificate on port 8006 may need browser approval).",
-          );
+          setErrorMessage("WebSocket connection closed.");
         }
       });
 
@@ -79,7 +84,9 @@ export function VncTerminal({
     connectVnc();
     return () => {
       if (rfbRef.current) {
-        rfbRef.current.disconnect();
+        try {
+          rfbRef.current.disconnect();
+        } catch (e) {}
       }
     };
   }, [vmid]);
@@ -124,29 +131,39 @@ export function VncTerminal({
           </div>
         </div>
 
-        {/* Terminal Screen Area */}
+        {/* Terminal Screen Canvas */}
         <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden">
           {status === "connecting" && (
-            <div className="absolute z-10 text-zinc-400 text-xs font-mono flex items-center gap-2">
+            <div className="absolute z-10 text-zinc-400 text-xs font-mono flex items-center gap-2 bg-zinc-900/80 px-4 py-2 rounded-lg border border-zinc-800">
               <RefreshCw className="w-4 h-4 animate-spin" /> Negotiating noVNC
               WebSocket handshake...
             </div>
           )}
 
-          {status === "error" && (
-            <div className="absolute z-10 text-center max-w-md p-4">
+          {status === "disconnected" && errorMessage && (
+            <div className="absolute z-10 text-center max-w-md p-6 bg-zinc-900/90 border border-rose-900/40 rounded-xl">
               <p className="text-rose-400 text-sm font-medium mb-2">
-                Connection Failed
+                Connection Interrupted
               </p>
               <p className="text-zinc-400 text-xs font-mono mb-4">
                 {errorMessage}
               </p>
-              <button
-                onClick={connectVnc}
-                className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-200 rounded"
-              >
-                Retry Connection
-              </button>
+              <div className="flex justify-center gap-2">
+                <a
+                  href={`https://${node === "pve-server" ? "192.168.1.200" : "192.168.1.200"}:8006`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-xs text-emerald-400 rounded transition-colors"
+                >
+                  Accept Proxmox SSL
+                </a>
+                <button
+                  onClick={connectVnc}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-xs text-white rounded transition-colors"
+                >
+                  Retry
+                </button>
+              </div>
             </div>
           )}
 

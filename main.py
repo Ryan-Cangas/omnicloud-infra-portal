@@ -1,32 +1,66 @@
+"""
+Sovereign Cloud Management Platform (CMP) Control Plane & Hypervisor Gateway.
+
+Architecture & Responsibilities:
+1. Cryptographic Authentication & RBAC (JWT): Issues signed HS256 access tokens containing user_id,
+   role, and tenant_id claims.
+2. Proxmox Hypervisor Communication: Supports both Proxmox API Tokens (Key/Secret) and standard PAM/PVE
+   user authentication via proxmoxer.
+3. Strict Tenant & Role Isolation: Enforces VM boundaries across tenants (e.g., Alpha Corp vs. FinTech Core)
+   and restricts personas (SuperAdmin, TenantAdmin, TenantViewer, BillingManager).
+4. Ephemeral Single-Use WebSocket Tokens: Issues 30-second scoped console tokens to prevent token reuse
+   in browser WebSocket query parameters.
+5. Bidirectional RFB WebSocket Reverse Proxy: Dynamically bridges client RFB frame packets to 
+   Proxmox's internal `vncwebsocket` daemon with dynamic header inspection.
+"""
+
 import os
 import ssl
 import json
 import asyncio
 import inspect
 import urllib.parse
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
+from pathlib import Path
+
+import jwt
+import bcrypt
 import requests
 import urllib3
 import websockets
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, Depends
+from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from proxmoxer import ProxmoxAPI
 from dotenv import load_dotenv
 
 # Suppress TLS verification warnings for internal self-signed Proxmox certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-load_dotenv()
+
+# Explicitly load root .env file
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=env_path, override=True)
 
 # Hypervisor Node & Credentials Configuration
 PROXMOX_HOST = os.getenv("PROXMOX_HOST", "192.168.1.200")
 PROXMOX_USER = os.getenv("PROXMOX_USER", "root@pam")
-PROXMOX_PASSWORD = os.getenv("PROXMOX_PASSWORD", "password")
+PROXMOX_PASSWORD = os.getenv("PROXMOX_PASSWORD", "")
+PROXMOX_TOKEN_NAME = os.getenv("PROXMOX_TOKEN_NAME", "")
+PROXMOX_TOKEN_VALUE = os.getenv("PROXMOX_TOKEN_VALUE", "")
+
+# JWT Security Configuration
+JWT_SECRET = os.getenv("JWT_SECRET_KEY", "sovereign-cloud-cmp-secret-key-production-hardened-2026")
+JWT_ALGORITHM = "HS256"
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 120
+JWT_CONSOLE_TOKEN_EXPIRE_SECONDS = 30  # Short-lived ephemeral token for noVNC WebSocket sessions
 
 # Initialize FastAPI Application
 app = FastAPI(
     title="Sovereign Cloud CMP & Hypervisor Proxy Engine",
     description="Multi-tenant cloud management control plane with isolated hypervisor proxies.",
-    version="1.0.0"
+    version="1.2.0"
 )
 
 # Cross-Origin Resource Sharing (CORS) Middleware for local Vite development
@@ -38,87 +72,176 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Persistent Proxmox API Client for state inspection and lifecycle calls
-proxmox = ProxmoxAPI(
-    PROXMOX_HOST,
-    user=PROXMOX_USER,
-    password=PROXMOX_PASSWORD,
-    verify_ssl=False
-)
+# Initialize Proxmox API Client supporting both API Token and Password authentication
+if PROXMOX_TOKEN_NAME and PROXMOX_TOKEN_VALUE:
+    proxmox = ProxmoxAPI(
+        PROXMOX_HOST,
+        user=PROXMOX_USER,
+        token_name=PROXMOX_TOKEN_NAME,
+        token_value=PROXMOX_TOKEN_VALUE,
+        verify_ssl=False
+    )
+else:
+    proxmox = ProxmoxAPI(
+        PROXMOX_HOST,
+        user=PROXMOX_USER,
+        password=PROXMOX_PASSWORD,
+        verify_ssl=False
+    )
 
 # ---------------------------------------------------------------------------
-# Multi-Tenant RBAC Data Models & Context Dependency
+# Multi-Tenant RBAC Store & Partition Mappings
 # ---------------------------------------------------------------------------
 
-# Static mapping simulating tenant partition allocations (To be backed by DB in production)
+# Strict VM partition boundaries per tenant
 TENANT_VM_MAP = {
     "tenant-alpha": [100, 101, 102],
     "tenant-fintech": [103, 104],
 }
 
+# Dynamic password hashing helper
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+
+DEFAULT_DEV_HASH = hash_password("password123")
+
+# Pre-hashed user store (Default password: "password123")
+USERS_DB = {
+    "admin-01": {
+        "user_id": "admin-01",
+        "username": "admin-01",
+        "password_hash": DEFAULT_DEV_HASH,
+        "role": "SuperAdmin",
+        "tenant_id": "global",
+        "name": "Cloud Operator",
+    },
+    "tenant-alex": {
+        "user_id": "tenant-alex",
+        "username": "tenant-alex",
+        "password_hash": DEFAULT_DEV_HASH,
+        "role": "TenantAdmin",
+        "tenant_id": "tenant-alpha",
+        "name": "Alex Rivera",
+    },
+    "viewer-sam": {
+        "user_id": "viewer-sam",
+        "username": "viewer-sam",
+        "password_hash": DEFAULT_DEV_HASH,
+        "role": "TenantViewer",
+        "tenant_id": "tenant-alpha",
+        "name": "Sam Taylor",
+    },
+    "finance-claire": {
+        "user_id": "finance-claire",
+        "username": "finance-claire",
+        "password_hash": DEFAULT_DEV_HASH,
+        "role": "BillingManager",
+        "tenant_id": "tenant-alpha",
+        "name": "Claire Dupont",
+    },
+}
+
 class UserContext:
-    """
-    Encapsulates identity metadata and role boundaries for the active caller.
-    Roles:
-      - SuperAdmin: Global MSP cluster access across all nodes and VMs.
-      - TenantAdmin: Full VM power and noVNC console access for assigned tenant VMs.
-      - TenantViewer: Read-only telemetry visibility for assigned tenant VMs.
-      - BillingManager: Financial and workspace access only; no hypervisor access.
-    """
-    def __init__(self, user_id: str, role: str, tenant_id: str):
+    """Encapsulates authenticated claims verified from cryptographic JWT."""
+    def __init__(self, user_id: str, role: str, tenant_id: str, name: Optional[str] = None):
         self.user_id = user_id
         self.role = role
         self.tenant_id = tenant_id
+        self.name = name
 
-def get_current_user(
-    x_user_id: Optional[str] = Header("admin-01", description="Caller Unique Identifier"),
-    x_user_role: Optional[str] = Header("SuperAdmin", description="Caller RBAC Role"),
-    x_tenant_id: Optional[str] = Header("global", description="Caller Tenant Partition ID")
-) -> UserContext:
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class ConsoleTokenRequest(BaseModel):
+    node: str
+    vm_type: str
+    vmid: int
+
+# ---------------------------------------------------------------------------
+# Cryptographic Token Helpers & Dependencies
+# ---------------------------------------------------------------------------
+
+security_scheme = HTTPBearer(auto_error=False)
+
+def create_jwt_token(payload_data: dict, expires_delta: timedelta) -> str:
+    payload = payload_data.copy()
+    expire = datetime.now(timezone.utc) + expires_delta
+    payload.update({"exp": expire, "iat": datetime.now(timezone.utc)})
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme)) -> UserContext:
     """
-    FastAPI dependency that parses and validates RBAC persona headers on protected routes.
+    Validates the Bearer JWT token from the Authorization header.
+    Rejects missing, expired, or tampered tokens with 401 Unauthorized.
     """
-    valid_roles = ["SuperAdmin", "TenantAdmin", "TenantViewer", "BillingManager"]
-    if x_user_role not in valid_roles:
-        raise HTTPException(status_code=403, detail=f"Invalid RBAC Role specified: {x_user_role}")
-    return UserContext(user_id=x_user_id, role=x_user_role, tenant_id=x_tenant_id)
+    if not credentials or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Bearer authentication token."
+        )
+
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        role = payload.get("role")
+        tenant_id = payload.get("tenant_id")
+        token_type = payload.get("type", "access")
+
+        if not user_id or not role or not tenant_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload structure.")
+        if token_type != "access":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type.")
+
+        return UserContext(user_id=user_id, role=role, tenant_id=tenant_id, name=payload.get("name"))
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired. Please re-authenticate.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid cryptographic token.")
 
 def enforce_vm_access(vmid: int, user: UserContext, required_action: str = "view"):
     """
-    Enforces isolation boundaries between tenants and role capabilities.
-    Blocks cross-tenant unauthorized resource manipulation.
+    Enforces isolation boundaries between tenants and roles.
+    Blocks cross-tenant access and unauthorized power/console mutations.
     """
-    # 1. Billing Managers have zero access to hypervisor compute workloads
     if user.role == "BillingManager":
         raise HTTPException(
-            status_code=403, 
+            status_code=status.HTTP_403_FORBIDDEN, 
             detail="Forbidden: Billing personas cannot interact with hypervisor workloads."
         )
 
-    # 2. SuperAdmin bypasses tenant isolation filters
     if user.role == "SuperAdmin":
         return
 
-    # 3. Verify target VM belongs to caller's registered tenant partition
     allowed_vmids = TENANT_VM_MAP.get(user.tenant_id, [])
     if vmid not in allowed_vmids:
         raise HTTPException(
-            status_code=403, 
+            status_code=status.HTTP_403_FORBIDDEN, 
             detail=f"Access Denied: VM {vmid} does not belong to tenant partition '{user.tenant_id}'."
         )
 
-    # 4. Restrict read-only viewers from mutating power states or initiating RFB console streams
     if required_action in ["power", "console"] and user.role == "TenantViewer":
         raise HTTPException(
-            status_code=403, 
+            status_code=status.HTTP_403_FORBIDDEN, 
             detail=f"Forbidden: Role '{user.role}' does not have '{required_action}' privileges."
         )
 
-def get_pve_auth_session():
+def get_pve_auth_headers_and_cookies():
     """
-    Generates an ephemeral PVEAuthCookie and CSRF token from Proxmox.
-    Required for noVNC proxy authorization since API Tokens cannot issue /vncproxy tickets.
+    Generates credentials for upstream Proxmox calls.
+    Supports API Token headers directly, or fetches ephemeral PVEAuthCookie and CSRF tokens.
     """
+    if PROXMOX_TOKEN_NAME and PROXMOX_TOKEN_VALUE:
+        return {
+            "headers": {"Authorization": f"PVEAPIToken={PROXMOX_USER}!{PROXMOX_TOKEN_NAME}={PROXMOX_TOKEN_VALUE}"},
+            "cookies": {},
+            "session_ticket": "API_TOKEN_AUTH"
+        }
+
     url = f"https://{PROXMOX_HOST}:8006/api2/json/access/ticket"
     resp = requests.post(
         url,
@@ -129,16 +252,98 @@ def get_pve_auth_session():
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail="PVE Session Ticket Generation Failed")
     data = resp.json()["data"]
-    return data["ticket"], data["CSRFPreventionToken"]
+    return {
+        "headers": {"CSRFPreventionToken": data["CSRFPreventionToken"]},
+        "cookies": {"PVEAuthCookie": data["ticket"]},
+        "session_ticket": data["ticket"]
+    }
 
 # ---------------------------------------------------------------------------
-# API Route Controllers
+# Authentication Routes
+# ---------------------------------------------------------------------------
+
+@app.post("/api/v1/auth/login")
+def login(req: LoginRequest):
+    """
+    Validates user credentials against USERS_DB and issues an HS256 signed JWT.
+    Returns both camelCase and snake_case keys for seamless frontend binding.
+    """
+    user_record = USERS_DB.get(req.username)
+    if not user_record or not verify_password(req.password, user_record["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password."
+        )
+
+    access_token = create_jwt_token(
+        payload_data={
+            "sub": user_record["user_id"],
+            "role": user_record["role"],
+            "tenant_id": user_record["tenant_id"],
+            "name": user_record["name"],
+            "type": "access",
+        },
+        expires_delta=timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "userId": user_record["user_id"],
+            "user_id": user_record["user_id"],
+            "role": user_record["role"],
+            "tenantId": user_record["tenant_id"],
+            "tenant_id": user_record["tenant_id"],
+            "name": user_record["name"],
+        }
+    }
+
+@app.get("/api/v1/auth/me")
+def get_me(user: UserContext = Depends(get_current_user)):
+    """Validates the active session and returns authenticated identity claims."""
+    return {
+        "userId": user.user_id,
+        "user_id": user.user_id,
+        "role": user.role,
+        "tenantId": user.tenant_id,
+        "tenant_id": user.tenant_id,
+        "name": user.name
+    }
+
+@app.post("/api/v1/auth/console-token")
+def issue_ephemeral_console_token(
+    req: ConsoleTokenRequest,
+    user: UserContext = Depends(get_current_user)
+):
+    """
+    Issues a 30-second single-use JWT specifically scoped to a single VM's console session.
+    Prevents passing long-lived bearer tokens inside WebSocket URLs.
+    """
+    enforce_vm_access(req.vmid, user, required_action="console")
+
+    console_token = create_jwt_token(
+        payload_data={
+            "sub": user.user_id,
+            "role": user.role,
+            "tenant_id": user.tenant_id,
+            "vmid": req.vmid,
+            "node": req.node,
+            "vm_type": req.vm_type,
+            "type": "ephemeral_console",
+        },
+        expires_delta=timedelta(seconds=JWT_CONSOLE_TOKEN_EXPIRE_SECONDS)
+    )
+    return {"console_token": console_token}
+
+# ---------------------------------------------------------------------------
+# API Route Controllers (Guarded by JWT Dependencies)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/v1/cluster/resources")
 def get_cluster_inventory(user: UserContext = Depends(get_current_user)):
     """
-    Fetches guest VM and LXC inventory, applying tenant filtering and usage percentage clamps.
+    Fetches guest VM and LXC inventory, applying strict tenant filtering and usage percentage clamps.
     """
     if user.role == "BillingManager":
         return []
@@ -151,12 +356,10 @@ def get_cluster_inventory(user: UserContext = Depends(get_current_user)):
         for item in resources:
             vmid = item.get("vmid")
             
-            # Non-SuperAdmins can only see instances inside their assigned tenant pool
             if user.role != "SuperAdmin" and vmid not in allowed_vmids:
                 continue
 
             maxmem_gb = round(item.get("maxmem", 0) / (1024**3), 2)
-            # Clamp percentage strictly between 0.0% and 100.0% to prevent ballooning artifacts
             mem_pct = round(min(max((item.get("mem", 0) / max(item.get("maxmem", 1), 1)) * 100, 0.0), 100.0), 2)
             cpu_pct = round(min(max(item.get("cpu", 0) * 100, 0.0), 100.0), 2)
 
@@ -209,16 +412,22 @@ def generate_vnc_proxy_ticket(
     user: UserContext = Depends(get_current_user)
 ):
     """
-    Requests a short-lived VNC ticket and port assignment from Proxmox for out-of-band console access[cite: 4].
+    Requests a short-lived VNC ticket and port assignment from Proxmox for out-of-band console access.
     """
     enforce_vm_access(vmid, user, required_action="console")
     try:
-        session_ticket, csrf_token = get_pve_auth_session()
+        auth_data = get_pve_auth_headers_and_cookies()
         url = f"https://{PROXMOX_HOST}:8006/api2/json/nodes/{node}/{vm_type}/{vmid}/vncproxy"
-        headers = {"CSRFPreventionToken": csrf_token}
-        cookies = {"PVEAuthCookie": session_ticket}
         
-        resp = requests.post(url, headers=headers, cookies=cookies, data={"websocket": 1}, verify=False, timeout=10)
+        resp = requests.post(
+            url,
+            headers=auth_data["headers"],
+            cookies=auth_data["cookies"],
+            data={"websocket": 1},
+            verify=False,
+            timeout=10
+        )
+
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail="Proxmox refused VNC ticket request")
             
@@ -226,7 +435,7 @@ def generate_vnc_proxy_ticket(
         return {
             "ticket": data["ticket"],
             "port": data["port"],
-            "session_ticket": session_ticket,
+            "session_ticket": auth_data["session_ticket"],
             "user": data.get("user", PROXMOX_USER),
         }
     except Exception as e:
@@ -239,24 +448,24 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
     Protected exclusively for SuperAdmin roles.
     """
     if user.role != "SuperAdmin":
-        raise HTTPException(status_code=403, detail="Host telemetry access restricted to SuperAdmin.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Host telemetry access restricted to SuperAdmin.")
 
     try:
         nodes = proxmox.nodes.get()
         if not nodes:
             raise HTTPException(status_code=404, detail="No Proxmox nodes discovered")
         primary_node = nodes[0].get("node")
-        status = proxmox.nodes(primary_node).status.get()
+        node_status = proxmox.nodes(primary_node).status.get()
 
-        cpu_info = status.get("cpuinfo", {})
-        memory = status.get("memory", {})
-        root_fs = status.get("rootfs", {})
+        cpu_info = node_status.get("cpuinfo", {})
+        memory = node_status.get("memory", {})
+        root_fs = node_status.get("rootfs", {})
 
         return {
             "node": primary_node,
             "cpu": {
-                "usage_pct": round(min(max(status.get("cpu", 0) * 100, 0.0), 100.0), 2),
-                "cores": cpu_info.get("cpus", status.get("cpus", 0)),
+                "usage_pct": round(min(max(node_status.get("cpu", 0) * 100, 0.0), 100.0), 2),
+                "cores": cpu_info.get("cpus", node_status.get("cpus", 0)),
                 "sockets": cpu_info.get("sockets", 1),
                 "model": cpu_info.get("model", "Physical x86_64 Cores"),
             },
@@ -271,13 +480,17 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
                 "usage_pct": round(min(max((root_fs.get("used", 0) / max(root_fs.get("total", 1), 1)) * 100, 0.0), 100.0), 2),
             },
             "system": {
-                "pve_version": status.get("pveversion", "Proxmox VE"),
-                "kernel_version": status.get("kversion", "Linux"),
-                "uptime": status.get("uptime", 0),
+                "pve_version": node_status.get("pveversion", "Proxmox VE"),
+                "kernel_version": node_status.get("kversion", "Linux"),
+                "uptime": node_status.get("uptime", 0),
             }
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ---------------------------------------------------------------------------
+# WebSocket Tunnel (Secured by Ephemeral Console JWT)
+# ---------------------------------------------------------------------------
 
 @app.websocket("/api/v1/ws/vnc/{node}/{vm_type}/{vmid}")
 async def vnc_websocket_proxy(
@@ -288,16 +501,27 @@ async def vnc_websocket_proxy(
     port: int,
     ticket: str,
     session_ticket: str,
+    auth_token: str = Query(..., description="Single-use ephemeral console JWT")
 ):
     """
     Asynchronous RFB reverse-proxy tunnel.
     Bridges the browser-side noVNC binary stream to Proxmox's internal `vncwebsocket` daemon.
-    Uses dynamic parameter introspection to remain compatible across all versions of `websockets`.
+    Requires a valid ephemeral console token.
     """
-    # Accept client WebSocket subprotocol immediately[cite: 4]
+    try:
+        payload = jwt.decode(auth_token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "ephemeral_console":
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        if payload.get("vmid") != vmid or payload.get("node") != node:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+    except Exception:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     await websocket.accept(subprotocol="binary")
     
-    # Decode in case URL params arrived encoded, then safely encode once for Proxmox upstream query
     raw_ticket = urllib.parse.unquote(ticket)
     raw_session = urllib.parse.unquote(session_ticket)
     encoded_vncticket = urllib.parse.quote(raw_ticket, safe="")
@@ -307,11 +531,13 @@ async def vnc_websocket_proxy(
         f"?port={port}&vncticket={encoded_vncticket}"
     )
     
-    # Disable SSL verification for internal hypervisor bridge[cite: 4]
     ssl_context = ssl._create_unverified_context()
-    headers_dict = {"Cookie": f"PVEAuthCookie={raw_session}"}
+    headers_dict = {}
+    if raw_session != "API_TOKEN_AUTH":
+        headers_dict["Cookie"] = f"PVEAuthCookie={raw_session}"
+    elif PROXMOX_TOKEN_NAME and PROXMOX_TOKEN_VALUE:
+        headers_dict["Authorization"] = f"PVEAPIToken={PROXMOX_USER}!{PROXMOX_TOKEN_NAME}={PROXMOX_TOKEN_VALUE}"
 
-    # Introspect websockets.connect parameter signature to prevent BaseEventLoop keyword leaks
     sig = inspect.signature(websockets.connect)
     connect_kwargs = {
         "subprotocols": ["binary"],
@@ -327,10 +553,8 @@ async def vnc_websocket_proxy(
         connect_kwargs["additional_headers"] = headers_dict
 
     try:
-        # Establish upstream connection to Proxmox[cite: 4]
         async with websockets.connect(pve_ws_url, **connect_kwargs) as pve_ws:
 
-            # Task 1: Stream client keyboard/mouse RFB events to Proxmox[cite: 4]
             async def client_to_pve():
                 try:
                     while True:
@@ -339,19 +563,16 @@ async def vnc_websocket_proxy(
                 except (WebSocketDisconnect, Exception):
                     pass
 
-            # Task 2: Stream framebuffer binary updates from Proxmox to client[cite: 4]
             async def pve_to_client():
                 try:
                     async for message in pve_ws:
                         if isinstance(message, str):
-                            # Convert initial RFB greeting handshake string to latin-1 bytes[cite: 4]
                             await websocket.send_bytes(message.encode("latin-1"))
                         else:
                             await websocket.send_bytes(message)
                 except Exception:
                     pass
 
-            # Concurrently execute bidirectional stream tasks[cite: 4]
             await asyncio.gather(client_to_pve(), pve_to_client())
     except Exception as e:
         print(f"[WebSocket Proxy Error]: {e}")

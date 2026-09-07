@@ -4,9 +4,11 @@
  * Developer Notes:
  * 1. Time Horizon Filter: "This Week", "This Month", and "This Quarter" dynamically re-calculate
  *    CRM progress, revenue MRR, completed task velocity, and tenant provisioning rates.
- * 2. Multi-Tenant RBAC Integration: Evaluates active persona boundaries (SuperAdmin, TenantAdmin,
+ * 2. Cryptographic JWT Authentication: Requests signed Bearer tokens from /api/v1/auth/login and
+ *    attaches Authorization headers across all protected endpoints.
+ * 3. Multi-Tenant RBAC Integration: Evaluates active persona boundaries (SuperAdmin, TenantAdmin,
  *    TenantViewer, BillingManager) across infrastructure actions and financial records.
- * 3. Functional Modules Scaffolding:
+ * 4. Functional Modules Scaffolding:
  *    - Tasks: Filterable, interactive status toggle (Pending -> In Progress -> Completed).
  *    - Calendar: Maintenance windows, scheduled audit slots, and hypervisor kernel patch timelines.
  *    - Notes: Sovereign runbook repository with interactive tag filtering.
@@ -45,45 +47,50 @@ import {
   Tag,
   TrendingUp,
   ArrowUpRight,
+  LogOut,
+  KeyRound,
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
 
-// Type definitions for RBAC Persona
 type Role = "SuperAdmin" | "TenantAdmin" | "TenantViewer" | "BillingManager";
 type TimeFilter = "week" | "month" | "quarter";
 
-interface PersonaConfig {
+interface PersonaProfile {
   userId: string;
   role: Role;
   tenantId: string;
-  label: string;
+  name: string;
+  defaultPassword?: string;
 }
 
-// Pre-configured persona set for interactive control plane testing
-const PERSONAS: PersonaConfig[] = [
+const PERSONA_ACCOUNTS: PersonaProfile[] = [
   {
     userId: "admin-01",
     role: "SuperAdmin",
     tenantId: "global",
-    label: "Cloud Operator (SuperAdmin)",
+    name: "Cloud Operator (SuperAdmin)",
+    defaultPassword: "password123",
   },
   {
     userId: "tenant-alex",
     role: "TenantAdmin",
     tenantId: "tenant-alpha",
-    label: "Alpha Corp (TenantAdmin)",
+    name: "Alpha Corp (TenantAdmin)",
+    defaultPassword: "password123",
   },
   {
     userId: "viewer-sam",
     role: "TenantViewer",
     tenantId: "tenant-alpha",
-    label: "Alpha Corp (TenantViewer)",
+    name: "Alpha Corp (TenantViewer)",
+    defaultPassword: "password123",
   },
   {
     userId: "finance-claire",
     role: "BillingManager",
     tenantId: "tenant-alpha",
-    label: "Finance (BillingManager)",
+    name: "Finance (BillingManager)",
+    defaultPassword: "password123",
   },
 ];
 
@@ -145,10 +152,17 @@ export default function App() {
   // Time Horizon Filter State (This Week, This Month, This Quarter)
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("month");
 
-  // RBAC Persona State
-  const [currentPersona, setCurrentPersona] = useState<PersonaConfig>(
-    PERSONAS[0],
+  // Authentication State
+  const [authToken, setAuthToken] = useState<string | null>(
+    localStorage.getItem("cmp_jwt_token"),
   );
+  const [currentUser, setCurrentUser] = useState<PersonaProfile | null>(null);
+  const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
+  const [loginError, setLoginError] = useState<string>("");
+
+  // Fallback Manual Credentials
+  const [loginUsername, setLoginUsername] = useState("admin-01");
+  const [loginPassword, setLoginPassword] = useState("password123");
 
   // Compute & Node Telemetry States
   const [resources, setResources] = useState<GuestResource[]>([]);
@@ -162,10 +176,6 @@ export default function App() {
     vmid: number;
     vmName: string;
   } | null>(null);
-
-  // -------------------------------------------------------------------------
-  // Functional Module States
-  // -------------------------------------------------------------------------
 
   // Tasks State
   const [taskList, setTaskList] = useState<TaskItem[]>([
@@ -205,24 +215,6 @@ export default function App() {
       dueDate: "Oct 05",
       assignee: "SecOps Team",
     },
-    {
-      id: 5,
-      title: "Review tenant Alpha Corp dedicated VLAN route tables",
-      horizon: "month",
-      status: "Completed",
-      priority: "Low",
-      dueDate: "Sep 02",
-      assignee: "Network Eng",
-    },
-    {
-      id: 6,
-      title: "Disaster recovery failover simulation for FinTech vault",
-      horizon: "quarter",
-      status: "Pending",
-      priority: "High",
-      dueDate: "Nov 14",
-      assignee: "Alex Rivera",
-    },
   ]);
 
   // Calendar Events State
@@ -254,15 +246,6 @@ export default function App() {
       horizon: "month",
       targetNode: "Cluster Global",
     },
-    {
-      id: 4,
-      title: "Sovereign Cloud Data Residency Review",
-      type: "Billing Review",
-      date: "Oct 20, 2026",
-      time: "11:00 - 13:00 UTC",
-      horizon: "quarter",
-      targetNode: "Alpha Workspaces",
-    },
   ]);
 
   // Notes Runbook Vault State
@@ -291,18 +274,9 @@ export default function App() {
       title: "Proxmox VE 8.x noVNC Tunnel Hardening",
       tag: "Security",
       snippet:
-        "Always pass session cookies in extra_headers / additional_headers to bypass the 401 loop.",
+        "Session cookies forwarded via inspected websocket headers to prevent BaseEventLoop leaks.",
       author: "Ryan Andre",
       updated: "Just now",
-    },
-    {
-      id: 4,
-      title: "Zero-Knowledge Vault Backup Protocol",
-      tag: "Compliance",
-      snippet:
-        "Ensure Shamir secret fragments are mirrored across physically isolated offsite storage nodes.",
-      author: "SecOps Lead",
-      updated: "3 weeks ago",
     },
   ]);
 
@@ -314,7 +288,7 @@ export default function App() {
       id: 1,
       sender: "Alex Rivera",
       role: "DevOps Lead",
-      text: "Node-01 migration scheduled for 02:00 UTC. Check telemetry gauges.",
+      text: "Node-01 migration scheduled for 02:00 UTC.",
       time: "10:14 AM",
     },
     {
@@ -324,13 +298,6 @@ export default function App() {
       text: "Acknowledged. Quotas and telemetry validated on host.",
       time: "10:18 AM",
     },
-    {
-      id: 3,
-      sender: "Claire Dupont",
-      role: "Billing Lead",
-      text: "Alpha Corp expansion invoice INV-2026-089 has been settled.",
-      time: "11:05 AM",
-    },
   ]);
 
   // Sovereign Integrations Marketplace State
@@ -339,7 +306,7 @@ export default function App() {
       name: "Wazuh SIEM",
       category: "Security & Compliance",
       status: "Installed",
-      desc: "Real-time host intrusion detection and PCI-DSS / ISO27001 sovereign log compliance.",
+      desc: "Real-time host intrusion detection and PCI-DSS sovereign log compliance.",
     },
     {
       name: "OpenObserve",
@@ -353,80 +320,97 @@ export default function App() {
       status: "Active",
       desc: "Hardware-backed Shamir Secret Sharing cryptographic vault for tenant certificates.",
     },
-    {
-      name: "Prometheus Node Exporter",
-      category: "Metrics Ingestion",
-      status: "Installed",
-      desc: "Bare-metal socket, disk IOPS, and memory throughput telemetry forwarder.",
-    },
-    {
-      name: "WireGuard SDN Mesh",
-      category: "Networking",
-      status: "Active",
-      desc: "Encrypted sovereign overlay networking interconnecting client clusters.",
-    },
-    {
-      name: "Nextcloud Sovereign Drive",
-      category: "Storage",
-      status: "Available",
-      desc: "End-to-end encrypted sovereign data workspace for multi-tenant assets.",
-    },
   ]);
 
-  // -------------------------------------------------------------------------
-  // Time Filter Dynamic Calculations
-  // -------------------------------------------------------------------------
-  const crmMetrics = useMemo(() => {
-    switch (timeFilter) {
-      case "week":
-        return {
-          mrr: "$1,850",
-          growth: "+14.2%",
-          bandwidth: "840 GB",
-          activeVmsDelta: "+2 deployed",
-          taskCompletionPct: 80,
-          targetUptime: "99.99%",
-        };
-      case "month":
-        return {
-          mrr: "$3,600",
-          growth: "+22.5%",
-          bandwidth: "4.2 TB",
-          activeVmsDelta: "+6 deployed",
-          taskCompletionPct: 65,
-          targetUptime: "99.95%",
-        };
-      case "quarter":
-        return {
-          mrr: "$11,400",
-          growth: "+38.9%",
-          bandwidth: "18.6 TB",
-          activeVmsDelta: "+14 deployed",
-          taskCompletionPct: 54,
-          targetUptime: "99.98%",
-        };
-    }
-  }, [timeFilter]);
+  /**
+   * Authenticates against the backend to receive a cryptographically signed JWT.
+   */
+  const handleAuthenticate = async (username: string, password: string) => {
+    setIsAuthenticating(true);
+    setLoginError("");
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: username.trim(),
+          password: password.trim(),
+        }),
+      });
 
-  // Request Headers Helper reflecting active RBAC persona
-  const getRbacHeaders = () => ({
-    "X-User-Id": currentPersona.userId,
-    "X-User-Role": currentPersona.role,
-    "X-Tenant-Id": currentPersona.tenantId,
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(
+          errData.detail || "Authentication failed. Check credentials.",
+        );
+      }
+
+      const data = await res.json();
+      localStorage.setItem("cmp_jwt_token", data.access_token);
+      setAuthToken(data.access_token);
+      setCurrentUser(data.user);
+    } catch (err: any) {
+      setLoginError(err.message);
+      setAuthToken(null);
+      localStorage.removeItem("cmp_jwt_token");
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
+  const switchPersonaAuth = async (targetUserId: string) => {
+    const persona = PERSONA_ACCOUNTS.find((p) => p.userId === targetUserId);
+    if (!persona) return;
+    await handleAuthenticate(
+      persona.userId,
+      persona.defaultPassword || "password123",
+    );
+  };
+
+  /**
+   * Validates active session on mount or automatically authenticates the initial SuperAdmin persona.
+   */
+  useEffect(() => {
+    if (authToken) {
+      fetch("http://localhost:8000/api/v1/auth/me", {
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error("Session invalid");
+          return res.json();
+        })
+        .then((user) => setCurrentUser(user))
+        .catch(() => {
+          localStorage.removeItem("cmp_jwt_token");
+          setAuthToken(null);
+          setCurrentUser(null);
+        });
+    } else {
+      switchPersonaAuth("admin-01");
+    }
+  }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem("cmp_jwt_token");
+    setAuthToken(null);
+    setCurrentUser(null);
+  };
+
+  const getAuthHeaders = () => ({
+    Authorization: `Bearer ${authToken}`,
   });
 
-  // Fetch guest VM/LXC inventory from FastAPI
   const fetchResources = async () => {
+    if (!authToken || !currentUser) return;
     try {
       const res = await fetch(
         "http://localhost:8000/api/v1/cluster/resources",
         {
-          headers: getRbacHeaders(),
+          headers: getAuthHeaders(),
         },
       );
       if (res.ok) {
-        const data = await res.json();
-        setResources(data);
+        setResources(await res.json());
       } else {
         setResources([]);
       }
@@ -435,19 +419,17 @@ export default function App() {
     }
   };
 
-  // Fetch physical host telemetry from FastAPI (SuperAdmin only)
   const fetchTelemetry = async () => {
-    if (currentPersona.role !== "SuperAdmin") {
+    if (!authToken || currentUser?.role !== "SuperAdmin") {
       setTelemetry(null);
       return;
     }
     try {
       const res = await fetch("http://localhost:8000/api/v1/nodes/telemetry", {
-        headers: getRbacHeaders(),
+        headers: getAuthHeaders(),
       });
       if (res.ok) {
-        const data = await res.json();
-        setTelemetry(data);
+        setTelemetry(await res.json());
       }
     } catch (err) {
       console.error("Failed to fetch telemetry:", err);
@@ -455,29 +437,31 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchResources();
-    fetchTelemetry();
-    const interval = setInterval(() => {
+    if (authToken && currentUser) {
       fetchResources();
       fetchTelemetry();
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [currentPersona]);
+      const interval = setInterval(() => {
+        fetchResources();
+        fetchTelemetry();
+      }, 4000);
+      return () => clearInterval(interval);
+    }
+  }, [authToken, currentUser]);
 
-  // Power action controller
   const handlePowerAction = async (
     node: string,
     vmType: "qemu" | "lxc",
     vmid: number,
     action: string,
   ) => {
+    if (!authToken) return;
     setActionLoading(vmid);
     try {
       const res = await fetch(
         `http://localhost:8000/api/v1/nodes/${node}/${vmType}/${vmid}/power/${action}`,
         {
           method: "POST",
-          headers: getRbacHeaders(),
+          headers: getAuthHeaders(),
         },
       );
       if (res.ok) {
@@ -493,7 +477,35 @@ export default function App() {
     }
   };
 
-  // Task status rotation handler
+  const crmMetrics = useMemo(() => {
+    switch (timeFilter) {
+      case "week":
+        return {
+          mrr: "$1,850",
+          growth: "+14.2%",
+          bandwidth: "840 GB",
+          activeVmsDelta: "+2 deployed",
+          taskCompletionPct: 80,
+        };
+      case "month":
+        return {
+          mrr: "$3,600",
+          growth: "+22.5%",
+          bandwidth: "4.2 TB",
+          activeVmsDelta: "+6 deployed",
+          taskCompletionPct: 65,
+        };
+      case "quarter":
+        return {
+          mrr: "$11,400",
+          growth: "+38.9%",
+          bandwidth: "18.6 TB",
+          activeVmsDelta: "+14 deployed",
+          taskCompletionPct: 54,
+        };
+    }
+  }, [timeFilter]);
+
   const toggleTaskStatus = (id: number) => {
     setTaskList((prev) =>
       prev.map((t) => {
@@ -519,7 +531,7 @@ export default function App() {
       {
         id: Date.now(),
         sender: "You",
-        role: currentPersona.role,
+        role: currentUser?.role || "User",
         text: chatMessage,
         time: "Just now",
       },
@@ -527,23 +539,19 @@ export default function App() {
     setChatMessage("");
   };
 
-  // Capability matrix
   const canControlPower =
-    currentPersona.role === "SuperAdmin" ||
-    currentPersona.role === "TenantAdmin";
+    currentUser?.role === "SuperAdmin" || currentUser?.role === "TenantAdmin";
   const canAccessConsole =
-    currentPersona.role === "SuperAdmin" ||
-    currentPersona.role === "TenantAdmin";
-  const canViewHostTelemetry = currentPersona.role === "SuperAdmin";
+    currentUser?.role === "SuperAdmin" || currentUser?.role === "TenantAdmin";
+  const canViewHostTelemetry = currentUser?.role === "SuperAdmin";
 
-  // Navigation schema
   const navItems = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
     ...(canViewHostTelemetry
       ? [{ id: "analytics", label: "Analytics", icon: BarChart3 }]
       : []),
     { id: "workspaces", label: "Workspaces", icon: Boxes },
-    ...(currentPersona.role === "SuperAdmin"
+    ...(currentUser?.role === "SuperAdmin"
       ? [{ id: "customers", label: "Customers", icon: Users }]
       : []),
     { id: "orders", label: "Orders & Billing", icon: ShoppingCart },
@@ -554,7 +562,97 @@ export default function App() {
     { id: "apps", label: "Apps", icon: Grid },
   ];
 
-  const runningCount = resources.filter((r) => r.status === "running").length;
+  if (!authToken || !currentUser) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#0d0d0f] text-zinc-100 p-4">
+        <div className="w-full max-w-md bg-[#121214] border border-zinc-800 p-8 rounded-2xl shadow-2xl">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400">
+              <KeyRound className="w-6 h-6" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-white">
+                OmniCloud Authentication
+              </h2>
+              <p className="text-xs text-zinc-400">
+                Sovereign Control Plane Token Gateway
+              </p>
+            </div>
+          </div>
+
+          {loginError && (
+            <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs rounded-xl">
+              {loginError}
+            </div>
+          )}
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleAuthenticate(loginUsername, loginPassword);
+            }}
+            className="space-y-4"
+          >
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
+                Username
+              </label>
+              <input
+                type="text"
+                value={loginUsername}
+                onChange={(e) => setLoginUsername(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-3 focus:outline-none focus:border-emerald-500"
+                placeholder="admin-01"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
+                Password
+              </label>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-3 focus:outline-none focus:border-emerald-500"
+                placeholder="••••••••"
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isAuthenticating}
+              className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold text-xs rounded-xl transition-colors shadow-sm"
+            >
+              {isAuthenticating
+                ? "Validating Token Claims..."
+                : "Sign In & Issue JWT"}
+            </button>
+          </form>
+
+          <div className="mt-6 pt-6 border-t border-zinc-800">
+            <span className="block text-[11px] text-zinc-500 mb-2 font-mono">
+              Quick Authenticate Persona:
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              {PERSONA_ACCOUNTS.map((p) => (
+                <button
+                  key={p.userId}
+                  onClick={() => switchPersonaAuth(p.userId)}
+                  className="px-2.5 py-1.5 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 rounded-lg text-[10px] text-zinc-300 truncate text-left"
+                >
+                  {p.role}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const filteredTasks = taskList.filter(
     (t) => t.horizon === timeFilter || timeFilter === "quarter",
   );
@@ -566,41 +664,39 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-[#0d0d0f] text-zinc-100 font-sans antialiased overflow-hidden selection:bg-zinc-800">
-      {/* Sidebar */}
+      {/* Sidebar Navigation */}
       <aside className="w-64 bg-[#121214] border-r border-zinc-800/80 flex flex-col justify-between shrink-0">
         <div className="p-4 flex flex-col h-full">
-          {/* Persona Switcher */}
+          {/* JWT Authenticated Persona Switcher */}
           <div className="p-3 bg-[#18181b] border border-zinc-800 rounded-xl mb-6 shadow-sm">
-            <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-2 flex items-center gap-1.5">
-              <UserCheck className="w-3.5 h-3.5 text-emerald-400" /> Active
-              Persona
+            <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-2 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <UserCheck className="w-3.5 h-3.5 text-emerald-400" />{" "}
+                Authenticated Persona
+              </span>
+              <span className="px-1.5 py-0.2 bg-emerald-500/10 text-emerald-400 text-[9px] font-mono rounded">
+                JWT Valid
+              </span>
             </div>
             <select
-              value={currentPersona.userId}
-              onChange={(e) => {
-                const found = PERSONAS.find((p) => p.userId === e.target.value);
-                if (found) setCurrentPersona(found);
-              }}
+              value={currentUser.userId}
+              onChange={(e) => switchPersonaAuth(e.target.value)}
               className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-lg p-2 focus:outline-none focus:border-emerald-500"
             >
-              {PERSONAS.map((p) => (
+              {PERSONA_ACCOUNTS.map((p) => (
                 <option key={p.userId} value={p.userId}>
-                  {p.label}
+                  {p.name}
                 </option>
               ))}
             </select>
             <div className="mt-2 text-[10px] font-mono text-zinc-400 flex justify-between">
               <span>
                 Role:{" "}
-                <strong className="text-emerald-400">
-                  {currentPersona.role}
-                </strong>
+                <strong className="text-emerald-400">{currentUser.role}</strong>
               </span>
               <span>
                 Tenant:{" "}
-                <strong className="text-sky-400">
-                  {currentPersona.tenantId}
-                </strong>
+                <strong className="text-sky-400">{currentUser.tenantId}</strong>
               </span>
             </div>
           </div>
@@ -630,19 +726,25 @@ export default function App() {
               );
             })}
           </nav>
+
+          <button
+            onClick={handleLogout}
+            className="mt-4 w-full flex items-center justify-center gap-2 px-3 py-2 bg-zinc-900 hover:bg-rose-500/10 hover:text-rose-400 border border-zinc-800 rounded-xl text-xs text-zinc-400 transition-colors"
+          >
+            <LogOut className="w-3.5 h-3.5" /> Sign Out
+          </button>
         </div>
       </aside>
 
-      {/* Main Content Area */}
+      {/* Main Container */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Header Bar with Functional Horizon Filters */}
+        {/* Header Bar */}
         <header className="h-16 border-b border-zinc-800/80 bg-[#121214]/60 backdrop-blur-md px-8 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-6">
             <h1 className="text-lg font-bold text-white tracking-tight capitalize">
               {activeTab}
             </h1>
 
-            {/* Dynamic Time Horizon Controller */}
             <div className="bg-[#18181b] p-1 rounded-xl border border-zinc-800 flex items-center shadow-inner">
               {(["week", "month", "quarter"] as const).map((filter) => (
                 <button
@@ -661,28 +763,19 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#18181b] border border-zinc-800 rounded-xl text-xs text-zinc-400">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              Horizon:{" "}
-              <strong className="text-white capitalize">
-                {timeFilter}ly view
-              </strong>
-            </div>
             <div className="px-3 py-1.5 bg-zinc-800/80 border border-zinc-700/60 rounded-xl text-xs font-mono text-zinc-300">
               User:{" "}
-              <span className="text-white font-bold">
-                {currentPersona.userId}
-              </span>
+              <span className="text-white font-bold">{currentUser.userId}</span>
             </div>
           </div>
         </header>
 
-        {/* Dynamic Route View */}
+        {/* Dynamic Route Content */}
         <main className="flex-1 overflow-y-auto p-8 space-y-6">
           {/* ================= OVERVIEW VIEW ================= */}
           {activeTab === "overview" && (
             <>
-              {/* Dynamic CRM Metrics Grid governed by Time Horizon */}
+              {/* Dynamic CRM Metrics Grid */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
@@ -732,11 +825,7 @@ export default function App() {
                       {crmMetrics.taskCompletionPct}%
                     </span>
                     <p className="text-[11px] text-zinc-400 mt-1">
-                      {
-                        filteredTasks.filter((t) => t.status === "Completed")
-                          .length
-                      }{" "}
-                      of {filteredTasks.length} milestones cleared
+                      Milestones cleared in window
                     </p>
                   </div>
                 </div>
@@ -753,13 +842,13 @@ export default function App() {
                       {crmMetrics.bandwidth}
                     </span>
                     <p className="text-[11px] text-zinc-400 mt-1">
-                      Target uptime: {crmMetrics.targetUptime}
+                      Sovereign overlay routing
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Provisioned Virtual Machines Infrastructure Table */}
+              {/* Guest Compute Infrastructure Grid */}
               <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
                 <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
                   <div>
@@ -768,9 +857,9 @@ export default function App() {
                       Provisioned Virtual Machines
                     </h2>
                     <p className="text-[11px] text-zinc-400">
-                      {currentPersona.role === "SuperAdmin"
+                      {currentUser.role === "SuperAdmin"
                         ? "Global Cluster View (All Tenants)"
-                        : `Tenant Scoped View (${currentPersona.tenantId})`}
+                        : `Tenant Scoped View (${currentUser.tenantId})`}
                     </p>
                   </div>
                   <button
@@ -783,7 +872,7 @@ export default function App() {
 
                 {resources.length === 0 ? (
                   <div className="p-12 text-center text-xs text-zinc-500 font-mono">
-                    {currentPersona.role === "BillingManager"
+                    {currentUser.role === "BillingManager"
                       ? "Billing Manager Role has no permission to view active compute instances."
                       : "No instances assigned to this tenant workspace."}
                   </div>
@@ -904,7 +993,7 @@ export default function App() {
             </>
           )}
 
-          {/* ================= ANALYTICS VIEW (SUPERADMIN ONLY) ================= */}
+          {/* ================= ANALYTICS VIEW ================= */}
           {activeTab === "analytics" && canViewHostTelemetry && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -993,7 +1082,7 @@ export default function App() {
                     Isolated Tenant Workspaces
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Multi-tenant compute partitions and SDN VLAN boundaries
+                    Multi-tenant compute partitions and SDN boundaries
                   </p>
                 </div>
                 {canControlPower && (
@@ -1060,70 +1149,69 @@ export default function App() {
           )}
 
           {/* ================= CUSTOMERS VIEW ================= */}
-          {activeTab === "customers" &&
-            currentPersona.role === "SuperAdmin" && (
-              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
-                <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
-                  <div>
-                    <h2 className="text-sm font-bold text-white">
-                      Partner Tenant Accounts
-                    </h2>
-                    <p className="text-xs text-zinc-400">
-                      Active contracts, billing schedules, and assigned nodes
-                    </p>
-                  </div>
+          {activeTab === "customers" && currentUser.role === "SuperAdmin" && (
+            <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-white">
+                    Partner Tenant Accounts
+                  </h2>
+                  <p className="text-xs text-zinc-400">
+                    Active contracts, billing schedules, and assigned nodes
+                  </p>
                 </div>
-                <table className="w-full text-left text-xs text-zinc-300">
-                  <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
-                    <tr>
-                      <th className="px-6 py-3">Tenant Name</th>
-                      <th className="px-6 py-3">Status</th>
-                      <th className="px-6 py-3">Instances</th>
-                      <th className="px-6 py-3">MRR</th>
-                      <th className="px-6 py-3">Primary Contact</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-800/60">
-                    {[
-                      {
-                        name: "Alpha Cloud Solutions",
-                        status: "Active",
-                        vms: "3 Instances",
-                        mrr: "$1,200",
-                        contact: "ops@alphacloud.io",
-                      },
-                      {
-                        name: "FinTech Vault Core",
-                        status: "Active",
-                        vms: "2 Instances",
-                        mrr: "$2,400",
-                        contact: "security@fintechvault.io",
-                      },
-                    ].map((cust, i) => (
-                      <tr key={i} className="hover:bg-zinc-800/20">
-                        <td className="px-6 py-4 font-semibold text-white">
-                          {cust.name}
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold rounded-full">
-                            {cust.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 font-mono text-zinc-400">
-                          {cust.vms}
-                        </td>
-                        <td className="px-6 py-4 font-mono text-white font-medium">
-                          {cust.mrr}
-                        </td>
-                        <td className="px-6 py-4 text-zinc-400">
-                          {cust.contact}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
               </div>
-            )}
+              <table className="w-full text-left text-xs text-zinc-300">
+                <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
+                  <tr>
+                    <th className="px-6 py-3">Tenant Name</th>
+                    <th className="px-6 py-3">Status</th>
+                    <th className="px-6 py-3">Instances</th>
+                    <th className="px-6 py-3">MRR</th>
+                    <th className="px-6 py-3">Primary Contact</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/60">
+                  {[
+                    {
+                      name: "Alpha Cloud Solutions",
+                      status: "Active",
+                      vms: "3 Instances",
+                      mrr: "$1,200",
+                      contact: "ops@alphacloud.io",
+                    },
+                    {
+                      name: "FinTech Vault Core",
+                      status: "Active",
+                      vms: "2 Instances",
+                      mrr: "$2,400",
+                      contact: "security@fintechvault.io",
+                    },
+                  ].map((cust, i) => (
+                    <tr key={i} className="hover:bg-zinc-800/20">
+                      <td className="px-6 py-4 font-semibold text-white">
+                        {cust.name}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold rounded-full">
+                          {cust.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 font-mono text-zinc-400">
+                        {cust.vms}
+                      </td>
+                      <td className="px-6 py-4 font-mono text-white font-medium">
+                        {cust.mrr}
+                      </td>
+                      <td className="px-6 py-4 text-zinc-400">
+                        {cust.contact}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* ================= ORDERS & BILLING VIEW ================= */}
           {activeTab === "orders" && (
@@ -1161,12 +1249,6 @@ export default function App() {
                       amount: "$1,200.00",
                       status: "Paid",
                     },
-                    {
-                      id: "INV-2026-087",
-                      desc: "BGP Dedicated IP Allocation",
-                      amount: "$85.00",
-                      status: "Paid",
-                    },
                   ].map((order, i) => (
                     <tr key={i} className="hover:bg-zinc-800/20">
                       <td className="px-6 py-4 font-mono font-medium text-white">
@@ -1188,7 +1270,7 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= TASKS VIEW (NEW FUNCTIONAL MODULE) ================= */}
+          {/* ================= TASKS VIEW ================= */}
           {activeTab === "tasks" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -1237,9 +1319,7 @@ export default function App() {
                             className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
                               task.priority === "High"
                                 ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                                : task.priority === "Medium"
-                                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                                  : "bg-zinc-800 text-zinc-400"
+                                : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
                             }`}
                           >
                             {task.priority}
@@ -1273,7 +1353,7 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= CALENDAR VIEW (NEW FUNCTIONAL MODULE) ================= */}
+          {/* ================= CALENDAR VIEW ================= */}
           {activeTab === "calendar" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -1328,7 +1408,7 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= NOTES RUNBOOK VAULT (NEW FUNCTIONAL MODULE) ================= */}
+          {/* ================= NOTES RUNBOOK VAULT ================= */}
           {activeTab === "notes" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -1341,27 +1421,22 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* Filter tags */}
                 <div className="flex items-center gap-1.5 bg-[#18181b] p-1 rounded-xl border border-zinc-800">
-                  {[
-                    "All",
-                    "Infrastructure",
-                    "Security",
-                    "Billing",
-                    "Compliance",
-                  ].map((tag) => (
-                    <button
-                      key={tag}
-                      onClick={() => setSelectedTag(tag)}
-                      className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
-                        selectedTag === tag
-                          ? "bg-zinc-800 text-white shadow-sm"
-                          : "text-zinc-400 hover:text-zinc-200"
-                      }`}
-                    >
-                      {tag}
-                    </button>
-                  ))}
+                  {["All", "Infrastructure", "Security", "Billing"].map(
+                    (tag) => (
+                      <button
+                        key={tag}
+                        onClick={() => setSelectedTag(tag)}
+                        className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
+                          selectedTag === tag
+                            ? "bg-zinc-800 text-white shadow-sm"
+                            : "text-zinc-400 hover:text-zinc-200"
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    ),
+                  )}
                 </div>
               </div>
 
@@ -1473,7 +1548,7 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= APPS VIEW (SOVEREIGN MARKETPLACE) ================= */}
+          {/* ================= APPS VIEW ================= */}
           {activeTab === "apps" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -1529,15 +1604,13 @@ export default function App() {
       </div>
 
       {/* Embedded noVNC Terminal Modal */}
-      {activeTerminal && (
+      {activeTerminal && authToken && (
         <VncTerminal
           node={activeTerminal.node}
           vmType={activeTerminal.vmType}
           vmid={activeTerminal.vmid}
           vmName={activeTerminal.vmName}
-          userId={currentPersona.userId}
-          userRole={currentPersona.role}
-          tenantId={currentPersona.tenantId}
+          authToken={authToken}
           onClose={() => setActiveTerminal(null)}
         />
       )}

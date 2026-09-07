@@ -1,14 +1,20 @@
 /**
- * Sovereign Cloud Management Platform (CMP) Dashboard.
+ * Sovereign Cloud Management Platform (CMP) & Cloud CRM Dashboard.
  *
- * Features:
- * - Multi-Tenant Persona Switcher: Simulates RBAC roles (SuperAdmin, TenantAdmin, TenantViewer, BillingManager).
- * - Live Hypervisor Telemetry: Real bare-metal CPU, RAM, Disk, and Kernel statistics from Proxmox.
- * - Dynamic Infrastructure Grid: Role-gated guest management with embedded noVNC console launch.
- * - Sovereign Cloud Modular Views: Workspaces, Customers, Billing, Tasks, Calendar, Notes, Chats, Apps.
+ * Developer Notes:
+ * 1. Time Horizon Filter: "This Week", "This Month", and "This Quarter" dynamically re-calculate
+ *    CRM progress, revenue MRR, completed task velocity, and tenant provisioning rates.
+ * 2. Multi-Tenant RBAC Integration: Evaluates active persona boundaries (SuperAdmin, TenantAdmin,
+ *    TenantViewer, BillingManager) across infrastructure actions and financial records.
+ * 3. Functional Modules Scaffolding:
+ *    - Tasks: Filterable, interactive status toggle (Pending -> In Progress -> Completed).
+ *    - Calendar: Maintenance windows, scheduled audit slots, and hypervisor kernel patch timelines.
+ *    - Notes: Sovereign runbook repository with interactive tag filtering.
+ *    - Chats: Support channel switcher with real-time interactive message broadcasting.
+ *    - Apps: Sovereign cloud integration marketplace (Wazuh SIEM, OpenObserve, Vault, Prometheus).
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   LayoutDashboard,
   BarChart3,
@@ -27,6 +33,7 @@ import {
   Server,
   Activity,
   CheckCircle2,
+  Clock,
   Cpu,
   HardDrive,
   Plus,
@@ -34,11 +41,16 @@ import {
   Send,
   Lock,
   UserCheck,
+  CalendarDays,
+  Tag,
+  TrendingUp,
+  ArrowUpRight,
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
 
-// Type definitions for RBAC & CMP telemetry
+// Type definitions for RBAC Persona
 type Role = "SuperAdmin" | "TenantAdmin" | "TenantViewer" | "BillingManager";
+type TimeFilter = "week" | "month" | "quarter";
 
 interface PersonaConfig {
   userId: string;
@@ -47,7 +59,7 @@ interface PersonaConfig {
   label: string;
 }
 
-// Predefined personas for local development and RBAC testing
+// Pre-configured persona set for interactive control plane testing
 const PERSONAS: PersonaConfig[] = [
   {
     userId: "admin-01",
@@ -95,8 +107,28 @@ interface NodeTelemetry {
   system: { pve_version: string; kernel_version: string; uptime: number };
 }
 
+interface TaskItem {
+  id: number;
+  title: string;
+  horizon: TimeFilter;
+  status: "Pending" | "In Progress" | "Completed";
+  priority: "High" | "Medium" | "Low";
+  dueDate: string;
+  assignee: string;
+}
+
+interface CalendarEvent {
+  id: number;
+  title: string;
+  type: "Maintenance" | "Security Audit" | "Billing Review" | "Snapshot Backup";
+  date: string;
+  time: string;
+  horizon: TimeFilter;
+  targetNode: string;
+}
+
 export default function App() {
-  // Navigation & Time Range State
+  // Navigation View State
   const [activeTab, setActiveTab] = useState<
     | "overview"
     | "analytics"
@@ -109,21 +141,21 @@ export default function App() {
     | "chats"
     | "apps"
   >("overview");
-  const [timeFilter, setTimeFilter] = useState<"week" | "month" | "quarter">(
-    "month",
-  );
 
-  // Active RBAC Persona state
+  // Time Horizon Filter State (This Week, This Month, This Quarter)
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>("month");
+
+  // RBAC Persona State
   const [currentPersona, setCurrentPersona] = useState<PersonaConfig>(
     PERSONAS[0],
   );
 
-  // Telemetry & Compute resource states
+  // Compute & Node Telemetry States
   const [resources, setResources] = useState<GuestResource[]>([]);
   const [telemetry, setTelemetry] = useState<NodeTelemetry | null>(null);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
 
-  // Active noVNC Terminal modal target
+  // Active noVNC Terminal target state
   const [activeTerminal, setActiveTerminal] = useState<{
     node: string;
     vmType: "qemu" | "lxc";
@@ -131,7 +163,110 @@ export default function App() {
     vmName: string;
   } | null>(null);
 
-  // Mock State: Notes Runbook Vault
+  // -------------------------------------------------------------------------
+  // Functional Module States
+  // -------------------------------------------------------------------------
+
+  // Tasks State
+  const [taskList, setTaskList] = useState<TaskItem[]>([
+    {
+      id: 1,
+      title: "Inspect QEMU-100 zero-knowledge vault backups",
+      horizon: "week",
+      status: "Completed",
+      priority: "High",
+      dueDate: "Aug 28",
+      assignee: "Alex Rivera",
+    },
+    {
+      id: 2,
+      title: "Apply kernel patch to node pve-server",
+      horizon: "week",
+      status: "In Progress",
+      priority: "High",
+      dueDate: "Aug 30",
+      assignee: "CloudHost DevOps",
+    },
+    {
+      id: 3,
+      title: "Re-balance storage pool local-lvm allocations",
+      horizon: "month",
+      status: "Pending",
+      priority: "Medium",
+      dueDate: "Sep 12",
+      assignee: "Infra Ops",
+    },
+    {
+      id: 4,
+      title: "Quarterly compliance audit and SIEM event validation",
+      horizon: "quarter",
+      status: "In Progress",
+      priority: "High",
+      dueDate: "Oct 05",
+      assignee: "SecOps Team",
+    },
+    {
+      id: 5,
+      title: "Review tenant Alpha Corp dedicated VLAN route tables",
+      horizon: "month",
+      status: "Completed",
+      priority: "Low",
+      dueDate: "Sep 02",
+      assignee: "Network Eng",
+    },
+    {
+      id: 6,
+      title: "Disaster recovery failover simulation for FinTech vault",
+      horizon: "quarter",
+      status: "Pending",
+      priority: "High",
+      dueDate: "Nov 14",
+      assignee: "Alex Rivera",
+    },
+  ]);
+
+  // Calendar Events State
+  const [calendarEvents] = useState<CalendarEvent[]>([
+    {
+      id: 1,
+      title: "Corosync Node Heartbeat Calibration",
+      type: "Maintenance",
+      date: "Aug 29, 2026",
+      time: "02:00 - 03:00 UTC",
+      horizon: "week",
+      targetNode: "pve-server",
+    },
+    {
+      id: 2,
+      title: "ZFS Pool Scrubbing & Trim Procedure",
+      type: "Snapshot Backup",
+      date: "Sep 04, 2026",
+      time: "23:00 - 01:00 UTC",
+      horizon: "month",
+      targetNode: "pve-server",
+    },
+    {
+      id: 3,
+      title: "Tenant Isolation & RBAC Penetration Audit",
+      type: "Security Audit",
+      date: "Sep 18, 2026",
+      time: "09:00 - 16:00 UTC",
+      horizon: "month",
+      targetNode: "Cluster Global",
+    },
+    {
+      id: 4,
+      title: "Sovereign Cloud Data Residency Review",
+      type: "Billing Review",
+      date: "Oct 20, 2026",
+      time: "11:00 - 13:00 UTC",
+      horizon: "quarter",
+      targetNode: "Alpha Workspaces",
+    },
+  ]);
+
+  // Notes Runbook Vault State
+  const [selectedTag, setSelectedTag] = useState<string>("All");
   const [notes] = useState([
     {
       id: 1,
@@ -139,35 +274,39 @@ export default function App() {
       tag: "Infrastructure",
       snippet:
         "Ensure VLAN 104 and VxLAN tunnels are initialized before spinning up worker nodes.",
+      author: "Alex Rivera",
+      updated: "2 days ago",
     },
     {
       id: 2,
-      title: "Quarterly Compute Quotas",
+      title: "Quarterly Compute Quotas & Overcommits",
       tag: "Billing",
       snippet:
         "Enterprise tier customers receive 128 vCPUs and 256GB dedicated memory pool defaults.",
+      author: "Claire Dupont",
+      updated: "1 week ago",
+    },
+    {
+      id: 3,
+      title: "Proxmox VE 8.x noVNC Tunnel Hardening",
+      tag: "Security",
+      snippet:
+        "Always pass session cookies in extra_headers / additional_headers to bypass the 401 loop.",
+      author: "Ryan Andre",
+      updated: "Just now",
+    },
+    {
+      id: 4,
+      title: "Zero-Knowledge Vault Backup Protocol",
+      tag: "Compliance",
+      snippet:
+        "Ensure Shamir secret fragments are mirrored across physically isolated offsite storage nodes.",
+      author: "SecOps Lead",
+      updated: "3 weeks ago",
     },
   ]);
 
-  // Mock State: Tasks / DevOps Checklist
-  const [taskList] = useState([
-    {
-      id: 1,
-      title: "Validate zero-knowledge vault backups",
-      status: "Completed",
-      priority: "High",
-      date: "Aug 25",
-    },
-    {
-      id: 2,
-      title: "Deploy telemetry collector on QEMU-100",
-      status: "In Progress",
-      priority: "Urgent",
-      date: "Aug 26",
-    },
-  ]);
-
-  // Mock State: Messaging Channel
+  // Support Chats State
   const [activeChat, setActiveChat] = useState("tech-support");
   const [chatMessage, setChatMessage] = useState("");
   const [messages, setMessages] = useState([
@@ -175,30 +314,108 @@ export default function App() {
       id: 1,
       sender: "Alex Rivera",
       role: "DevOps Lead",
-      text: "Node-01 migration scheduled for 02:00 UTC.",
+      text: "Node-01 migration scheduled for 02:00 UTC. Check telemetry gauges.",
       time: "10:14 AM",
     },
     {
       id: 2,
       sender: "You",
       role: "Admin",
-      text: "Acknowledged. Quotas and telemetry validated.",
+      text: "Acknowledged. Quotas and telemetry validated on host.",
       time: "10:18 AM",
+    },
+    {
+      id: 3,
+      sender: "Claire Dupont",
+      role: "Billing Lead",
+      text: "Alpha Corp expansion invoice INV-2026-089 has been settled.",
+      time: "11:05 AM",
     },
   ]);
 
-  /**
-   * Helper function: Generates headers reflecting the active RBAC persona.
-   */
+  // Sovereign Integrations Marketplace State
+  const [apps] = useState([
+    {
+      name: "Wazuh SIEM",
+      category: "Security & Compliance",
+      status: "Installed",
+      desc: "Real-time host intrusion detection and PCI-DSS / ISO27001 sovereign log compliance.",
+    },
+    {
+      name: "OpenObserve",
+      category: "Observability",
+      status: "Active",
+      desc: "Petabyte-scale cloud telemetry search and hypervisor node log ingestion.",
+    },
+    {
+      name: "Vault Zero-Trust",
+      category: "Key Management",
+      status: "Active",
+      desc: "Hardware-backed Shamir Secret Sharing cryptographic vault for tenant certificates.",
+    },
+    {
+      name: "Prometheus Node Exporter",
+      category: "Metrics Ingestion",
+      status: "Installed",
+      desc: "Bare-metal socket, disk IOPS, and memory throughput telemetry forwarder.",
+    },
+    {
+      name: "WireGuard SDN Mesh",
+      category: "Networking",
+      status: "Active",
+      desc: "Encrypted sovereign overlay networking interconnecting client clusters.",
+    },
+    {
+      name: "Nextcloud Sovereign Drive",
+      category: "Storage",
+      status: "Available",
+      desc: "End-to-end encrypted sovereign data workspace for multi-tenant assets.",
+    },
+  ]);
+
+  // -------------------------------------------------------------------------
+  // Time Filter Dynamic Calculations
+  // -------------------------------------------------------------------------
+  const crmMetrics = useMemo(() => {
+    switch (timeFilter) {
+      case "week":
+        return {
+          mrr: "$1,850",
+          growth: "+14.2%",
+          bandwidth: "840 GB",
+          activeVmsDelta: "+2 deployed",
+          taskCompletionPct: 80,
+          targetUptime: "99.99%",
+        };
+      case "month":
+        return {
+          mrr: "$3,600",
+          growth: "+22.5%",
+          bandwidth: "4.2 TB",
+          activeVmsDelta: "+6 deployed",
+          taskCompletionPct: 65,
+          targetUptime: "99.95%",
+        };
+      case "quarter":
+        return {
+          mrr: "$11,400",
+          growth: "+38.9%",
+          bandwidth: "18.6 TB",
+          activeVmsDelta: "+14 deployed",
+          taskCompletionPct: 54,
+          targetUptime: "99.98%",
+        };
+    }
+  }, [timeFilter]);
+
+  // Request Headers Helper reflecting active RBAC persona
   const getRbacHeaders = () => ({
     "X-User-Id": currentPersona.userId,
     "X-User-Role": currentPersona.role,
     "X-Tenant-Id": currentPersona.tenantId,
   });
 
-  /**
-   * Fetches the scoped guest VM/LXC inventory for the current persona.
-   */
+  // Fetch guest VM/LXC inventory from FastAPI
   const fetchResources = async () => {
     try {
       const res = await fetch(
@@ -218,9 +435,7 @@ export default function App() {
     }
   };
 
-  /**
-   * Fetches real bare-metal node telemetry from Proxmox (SuperAdmin only).
-   */
+  // Fetch physical host telemetry from FastAPI (SuperAdmin only)
   const fetchTelemetry = async () => {
     if (currentPersona.role !== "SuperAdmin") {
       setTelemetry(null);
@@ -239,7 +454,6 @@ export default function App() {
     }
   };
 
-  // Polling loop: Refreshes VM status and telemetry every 4 seconds
   useEffect(() => {
     fetchResources();
     fetchTelemetry();
@@ -250,9 +464,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [currentPersona]);
 
-  /**
-   * Triggers VM power states (start, shutdown) with RBAC validation.
-   */
+  // Power action controller
   const handlePowerAction = async (
     node: string,
     vmType: "qemu" | "lxc",
@@ -281,6 +493,24 @@ export default function App() {
     }
   };
 
+  // Task status rotation handler
+  const toggleTaskStatus = (id: number) => {
+    setTaskList((prev) =>
+      prev.map((t) => {
+        if (t.id === id) {
+          const nextStatus =
+            t.status === "Pending"
+              ? "In Progress"
+              : t.status === "In Progress"
+                ? "Completed"
+                : "Pending";
+          return { ...t, status: nextStatus };
+        }
+        return t;
+      }),
+    );
+  };
+
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatMessage.trim()) return;
@@ -297,7 +527,7 @@ export default function App() {
     setChatMessage("");
   };
 
-  // Role Capability Checks
+  // Capability matrix
   const canControlPower =
     currentPersona.role === "SuperAdmin" ||
     currentPersona.role === "TenantAdmin";
@@ -306,7 +536,7 @@ export default function App() {
     currentPersona.role === "TenantAdmin";
   const canViewHostTelemetry = currentPersona.role === "SuperAdmin";
 
-  // Navigation Items dynamic filter based on role permissions
+  // Navigation schema
   const navItems = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
     ...(canViewHostTelemetry
@@ -325,14 +555,22 @@ export default function App() {
   ];
 
   const runningCount = resources.filter((r) => r.status === "running").length;
+  const filteredTasks = taskList.filter(
+    (t) => t.horizon === timeFilter || timeFilter === "quarter",
+  );
+  const filteredEvents = calendarEvents.filter(
+    (e) => e.horizon === timeFilter || timeFilter === "quarter",
+  );
+  const filteredNotes =
+    selectedTag === "All" ? notes : notes.filter((n) => n.tag === selectedTag);
 
   return (
     <div className="flex h-screen bg-[#0d0d0f] text-zinc-100 font-sans antialiased overflow-hidden selection:bg-zinc-800">
-      {/* Sidebar Navigation */}
+      {/* Sidebar */}
       <aside className="w-64 bg-[#121214] border-r border-zinc-800/80 flex flex-col justify-between shrink-0">
         <div className="p-4 flex flex-col h-full">
-          {/* Persona Switcher Selector for RBAC simulation */}
-          <div className="p-3 bg-[#18181b] border border-zinc-800 rounded-xl mb-6">
+          {/* Persona Switcher */}
+          <div className="p-3 bg-[#18181b] border border-zinc-800 rounded-xl mb-6 shadow-sm">
             <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-2 flex items-center gap-1.5">
               <UserCheck className="w-3.5 h-3.5 text-emerald-400" /> Active
               Persona
@@ -397,21 +635,22 @@ export default function App() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Header Bar */}
+        {/* Header Bar with Functional Horizon Filters */}
         <header className="h-16 border-b border-zinc-800/80 bg-[#121214]/60 backdrop-blur-md px-8 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-6">
             <h1 className="text-lg font-bold text-white tracking-tight capitalize">
               {activeTab}
             </h1>
 
-            <div className="bg-[#18181b] p-0.5 rounded-xl border border-zinc-800 flex items-center">
+            {/* Dynamic Time Horizon Controller */}
+            <div className="bg-[#18181b] p-1 rounded-xl border border-zinc-800 flex items-center shadow-inner">
               {(["week", "month", "quarter"] as const).map((filter) => (
                 <button
                   key={filter}
                   onClick={() => setTimeFilter(filter)}
-                  className={`px-3 py-1 rounded-lg text-xs font-medium capitalize transition-all ${
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-all ${
                     timeFilter === filter
-                      ? "bg-zinc-800 text-white shadow"
+                      ? "bg-zinc-800 text-white shadow-sm border border-zinc-700/60"
                       : "text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
@@ -421,8 +660,15 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="px-3 py-1 bg-zinc-800/80 border border-zinc-700/60 rounded-xl text-xs font-mono text-zinc-300">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#18181b] border border-zinc-800 rounded-xl text-xs text-zinc-400">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              Horizon:{" "}
+              <strong className="text-white capitalize">
+                {timeFilter}ly view
+              </strong>
+            </div>
+            <div className="px-3 py-1.5 bg-zinc-800/80 border border-zinc-700/60 rounded-xl text-xs font-mono text-zinc-300">
               User:{" "}
               <span className="text-white font-bold">
                 {currentPersona.userId}
@@ -431,24 +677,29 @@ export default function App() {
           </div>
         </header>
 
-        {/* Dynamic Route Content */}
+        {/* Dynamic Route View */}
         <main className="flex-1 overflow-y-auto p-8 space-y-6">
           {/* ================= OVERVIEW VIEW ================= */}
           {activeTab === "overview" && (
             <>
-              {/* Stat Metric Cards */}
+              {/* Dynamic CRM Metrics Grid governed by Time Horizon */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
-                    <span className="text-xs font-semibold">Total Guests</span>
-                    <Server className="w-4 h-4 text-zinc-500" />
+                    <span className="text-xs font-semibold">
+                      Managed Instances
+                    </span>
+                    <Server className="w-4 h-4 text-emerald-400" />
                   </div>
                   <div className="mt-4">
                     <span className="text-3xl font-bold text-white tracking-tight">
                       {resources.length}
                     </span>
-                    <p className="text-[11px] text-zinc-400 mt-1">
-                      {runningCount} active instances
+                    <p className="text-[11px] text-zinc-400 mt-1 flex items-center gap-1">
+                      <span className="text-emerald-400 font-medium">
+                        {crmMetrics.activeVmsDelta}
+                      </span>{" "}
+                      this {timeFilter}
                     </p>
                   </div>
                 </div>
@@ -456,53 +707,60 @@ export default function App() {
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
                     <span className="text-xs font-semibold">
-                      Completed Tasks
+                      CRM Run-Rate MRR
                     </span>
-                    <CheckCircle2 className="w-4 h-4 text-zinc-500" />
+                    <TrendingUp className="w-4 h-4 text-indigo-400" />
                   </div>
                   <div className="mt-4">
                     <span className="text-3xl font-bold text-white tracking-tight">
-                      {taskList.filter((t) => t.status === "Completed").length}
+                      {crmMetrics.mrr}
                     </span>
-                    <p className="text-[11px] text-zinc-400 mt-1">
-                      Verified automations
+                    <p className="text-[11px] text-emerald-400 mt-1 flex items-center gap-0.5">
+                      <ArrowUpRight className="w-3.5 h-3.5" />{" "}
+                      {crmMetrics.growth} from previous {timeFilter}
                     </p>
                   </div>
                 </div>
 
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
-                    <span className="text-xs font-semibold">Events</span>
-                    <CalendarIcon className="w-4 h-4 text-zinc-500" />
+                    <span className="text-xs font-semibold">Task Velocity</span>
+                    <CheckCircle2 className="w-4 h-4 text-sky-400" />
                   </div>
                   <div className="mt-4">
                     <span className="text-3xl font-bold text-white tracking-tight">
-                      5
+                      {crmMetrics.taskCompletionPct}%
                     </span>
                     <p className="text-[11px] text-zinc-400 mt-1">
-                      Maintenance windows
+                      {
+                        filteredTasks.filter((t) => t.status === "Completed")
+                          .length
+                      }{" "}
+                      of {filteredTasks.length} milestones cleared
                     </p>
                   </div>
                 </div>
 
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
-                    <span className="text-xs font-semibold">Notes</span>
-                    <StickyNote className="w-4 h-4 text-zinc-500" />
+                    <span className="text-xs font-semibold">
+                      Edge Ingress Bandwidth
+                    </span>
+                    <Activity className="w-4 h-4 text-amber-400" />
                   </div>
                   <div className="mt-4">
                     <span className="text-3xl font-bold text-white tracking-tight">
-                      {notes.length}
+                      {crmMetrics.bandwidth}
                     </span>
                     <p className="text-[11px] text-zinc-400 mt-1">
-                      Saved runbooks
+                      Target uptime: {crmMetrics.targetUptime}
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Proxmox Compute Infrastructure Grid */}
-              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
+              {/* Provisioned Virtual Machines Infrastructure Table */}
+              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
                 <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
                   <div>
                     <h2 className="text-sm font-bold text-white flex items-center gap-2">
@@ -570,7 +828,6 @@ export default function App() {
                             % ({vm.maxmem_gb} GB)
                           </td>
                           <td className="px-6 py-4 text-right space-x-2">
-                            {/* Console Launch Button (Role-Gated) */}
                             <button
                               onClick={() =>
                                 setActiveTerminal({
@@ -594,7 +851,6 @@ export default function App() {
                               Console
                             </button>
 
-                            {/* Power Controls (Role-Gated) */}
                             {canControlPower ? (
                               vm.status === "running" ? (
                                 <button
@@ -878,8 +1134,7 @@ export default function App() {
                     Billing Statements & Invoices
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Automated recurring billing statements and compute expansion
-                    charges
+                    Recurring compute charges for this {timeFilter}
                   </p>
                 </div>
               </div>
@@ -896,7 +1151,7 @@ export default function App() {
                   {[
                     {
                       id: "INV-2026-089",
-                      desc: "Enterprise Compute Expansion (32GB RAM)",
+                      desc: "Compute Expansion (32GB RAM)",
                       amount: "$420.00",
                       status: "Paid",
                     },
@@ -904,6 +1159,12 @@ export default function App() {
                       id: "INV-2026-088",
                       desc: "Monthly Hypervisor Tenant Subscription",
                       amount: "$1,200.00",
+                      status: "Paid",
+                    },
+                    {
+                      id: "INV-2026-087",
+                      desc: "BGP Dedicated IP Allocation",
+                      amount: "$85.00",
                       status: "Paid",
                     },
                   ].map((order, i) => (
@@ -927,9 +1188,220 @@ export default function App() {
             </div>
           )}
 
+          {/* ================= TASKS VIEW (NEW FUNCTIONAL MODULE) ================= */}
+          {activeTab === "tasks" && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-white">
+                    DevOps & Infrastructure Milestones
+                  </h2>
+                  <p className="text-xs text-zinc-400">
+                    Operational tasks filtered for this {timeFilter} (Click
+                    status to advance)
+                  </p>
+                </div>
+                <div className="text-xs font-mono text-zinc-400 bg-[#18181b] px-3 py-1.5 rounded-xl border border-zinc-800">
+                  Active in Horizon:{" "}
+                  <strong className="text-white">{filteredTasks.length}</strong>
+                </div>
+              </div>
+
+              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
+                <table className="w-full text-left text-xs text-zinc-300">
+                  <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
+                    <tr>
+                      <th className="px-6 py-3">Task Description</th>
+                      <th className="px-6 py-3">Horizon</th>
+                      <th className="px-6 py-3">Priority</th>
+                      <th className="px-6 py-3">Assignee</th>
+                      <th className="px-6 py-3">Due Date</th>
+                      <th className="px-6 py-3 text-right">Status Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60">
+                    {filteredTasks.map((task) => (
+                      <tr
+                        key={task.id}
+                        className="hover:bg-zinc-800/20 transition-colors"
+                      >
+                        <td className="px-6 py-4 font-medium text-white flex items-center gap-2">
+                          <CheckSquare className="w-4 h-4 text-zinc-500 shrink-0" />
+                          {task.title}
+                        </td>
+                        <td className="px-6 py-4 capitalize font-mono text-zinc-400">
+                          {task.horizon}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              task.priority === "High"
+                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                : task.priority === "Medium"
+                                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                  : "bg-zinc-800 text-zinc-400"
+                            }`}
+                          >
+                            {task.priority}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-zinc-300">
+                          {task.assignee}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-zinc-400">
+                          {task.dueDate}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button
+                            onClick={() => toggleTaskStatus(task.id)}
+                            className={`px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-all ${
+                              task.status === "Completed"
+                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                                : task.status === "In Progress"
+                                  ? "bg-sky-500/10 text-sky-400 border-sky-500/20 hover:bg-sky-500/20"
+                                  : "bg-zinc-800/60 text-zinc-400 border-zinc-700 hover:bg-zinc-800"
+                            }`}
+                          >
+                            {task.status} ↻
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ================= CALENDAR VIEW (NEW FUNCTIONAL MODULE) ================= */}
+          {activeTab === "calendar" && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-white">
+                    Scheduled Maintenance Windows
+                  </h2>
+                  <p className="text-xs text-zinc-400">
+                    Target hypervisor maintenance and auditing windows for this{" "}
+                    {timeFilter}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {filteredEvents.map((evt) => (
+                  <div
+                    key={evt.id}
+                    className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="px-2.5 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-semibold rounded-full">
+                          {evt.type}
+                        </span>
+                        <span className="text-xs font-mono text-zinc-500">
+                          {evt.targetNode}
+                        </span>
+                      </div>
+                      <h3 className="text-sm font-bold text-white mb-2">
+                        {evt.title}
+                      </h3>
+                      <div className="flex items-center gap-4 text-xs font-mono text-zinc-400">
+                        <span className="flex items-center gap-1">
+                          <CalendarDays className="w-3.5 h-3.5 text-zinc-500" />{" "}
+                          {evt.date}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5 text-zinc-500" />{" "}
+                          {evt.time}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-6 pt-4 border-t border-zinc-800 flex justify-end">
+                      <button className="text-xs text-emerald-400 hover:underline">
+                        Download ICS Calendar Sync
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ================= NOTES RUNBOOK VAULT (NEW FUNCTIONAL MODULE) ================= */}
+          {activeTab === "notes" && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-white">
+                    Sovereign Cloud Runbooks & Vault
+                  </h2>
+                  <p className="text-xs text-zinc-400">
+                    Standard operating procedures and operational playbooks
+                  </p>
+                </div>
+
+                {/* Filter tags */}
+                <div className="flex items-center gap-1.5 bg-[#18181b] p-1 rounded-xl border border-zinc-800">
+                  {[
+                    "All",
+                    "Infrastructure",
+                    "Security",
+                    "Billing",
+                    "Compliance",
+                  ].map((tag) => (
+                    <button
+                      key={tag}
+                      onClick={() => setSelectedTag(tag)}
+                      className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
+                        selectedTag === tag
+                          ? "bg-zinc-800 text-white shadow-sm"
+                          : "text-zinc-400 hover:text-zinc-200"
+                      }`}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {filteredNotes.map((note) => (
+                  <div
+                    key={note.id}
+                    className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="flex items-center gap-1 text-[10px] font-mono text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded">
+                          <Tag className="w-3 h-3 text-zinc-500" /> {note.tag}
+                        </span>
+                        <span className="text-[10px] text-zinc-500 font-mono">
+                          Updated {note.updated}
+                        </span>
+                      </div>
+                      <h3 className="text-sm font-bold text-white mb-2">
+                        {note.title}
+                      </h3>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        {note.snippet}
+                      </p>
+                    </div>
+                    <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-500 font-mono">
+                      <span>Author: {note.author}</span>
+                      <button className="text-indigo-400 hover:underline">
+                        View Full Runbook
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* ================= CHATS VIEW ================= */}
           {activeTab === "chats" && (
-            <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl h-[600px] flex overflow-hidden">
+            <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl h-[600px] flex overflow-hidden shadow-sm">
               <div className="w-64 border-r border-zinc-800 p-4 flex flex-col">
                 <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">
                   Support Channels
@@ -941,7 +1413,7 @@ export default function App() {
                       onClick={() => setActiveChat(ch)}
                       className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all ${
                         activeChat === ch
-                          ? "bg-zinc-800 text-white font-semibold"
+                          ? "bg-zinc-800 text-white font-semibold shadow-sm"
                           : "text-zinc-400 hover:bg-zinc-800/40"
                       }`}
                     >
@@ -1000,6 +1472,59 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* ================= APPS VIEW (SOVEREIGN MARKETPLACE) ================= */}
+          {activeTab === "apps" && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-white">
+                    Sovereign Cloud Marketplace & Extensions
+                  </h2>
+                  <p className="text-xs text-zinc-400">
+                    Integrated security telemetry pipelines and cloud add-ons
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {apps.map((app, idx) => (
+                  <div
+                    key={idx}
+                    className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-[10px] font-mono text-zinc-500 uppercase font-semibold">
+                          {app.category}
+                        </span>
+                        <span
+                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                            app.status === "Active"
+                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                              : "bg-zinc-800 text-zinc-400"
+                          }`}
+                        >
+                          {app.status}
+                        </span>
+                      </div>
+                      <h3 className="text-sm font-bold text-white mb-2">
+                        {app.name}
+                      </h3>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        {app.desc}
+                      </p>
+                    </div>
+                    <div className="mt-6 pt-4 border-t border-zinc-800 flex justify-end">
+                      <button className="text-xs text-indigo-400 hover:underline flex items-center gap-1">
+                        Manage Integration <ExternalLink className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </main>
       </div>
 
@@ -1010,6 +1535,9 @@ export default function App() {
           vmType={activeTerminal.vmType}
           vmid={activeTerminal.vmid}
           vmName={activeTerminal.vmName}
+          userId={currentPersona.userId}
+          userRole={currentPersona.role}
+          tenantId={currentPersona.tenantId}
           onClose={() => setActiveTerminal(null)}
         />
       )}

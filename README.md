@@ -12,83 +12,55 @@
 [![Proxmox](https://img.shields.io/badge/Proxmox_VE-8.x-E57000?style=for-the-badge&logo=proxmox&logoColor=white)](https://www.proxmox.com)
 
 <p align="center">
-  A multi-tenant Sovereign Cloud Management Platform (CMP) and partner portal providing isolated compute telemetry, role-based access control, and low-latency out-of-band noVNC HTML5 terminal tunneling.
+  A multi-tenant Sovereign Cloud Management Platform (CMP) combining infrastructure orchestration, role-based boundary enforcement, out-of-band noVNC HTML5 web console streaming, and real-time CRM telemetry.
 </p>
 
-<!-- Demo Video / Animated GIF Showcase -->
-<p align="center">
-  <img src="./docs/assets/demo-preview.gif" alt="OmniCloud Platform Demo" width="850px" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);" />
-</p>
-
-[Key Features](#-key-features) •
-[Architecture](#-architecture) •
-[RBAC Capabilities](#-rbac-persona-matrix) •
-[Quickstart](#-getting-started) •
+[System Architecture](#-system-architecture) •
+[Key Capabilities](#-key-capabilities) •
+[RBAC Enforcement Matrix](#-rbac-enforcement-matrix) •
+[Time Horizon Engine](#-time-horizon-engine) •
+[Setup Guide](#-setup-guide) •
 [Roadmap](#-sprint-roadmap)
 
 </div>
 
 ---
 
-## 📸 Interface Previews
-
-<div align="center">
-  <table>
-    <tr>
-      <td width="50%">
-        <h4 align="center">Interactive VM/LXC Terminal (noVNC)</h4>
-        <img src="/img/noVNC.png" alt="noVNC Web Terminal" />
-      </td>
-      <td width="50%">
-        <h4 align="center">Bare-Metal Node Analytics</h4>
-        <img src="/img/pve-analytics.png" alt="Proxmox Analytics" />
-      </td>
-    </tr>
-    <tr>
-      <td width="50%">
-        <h4 align="center">Multi-Tenant Workspaces</h4>
-        <img src="/img/tenant-workspaces.png" alt="Tenant Workspaces" />
-      </td>
-      <td width="50%">
-        <h4 align="center">Integrated Partner CRM & Billing</h4>
-        <img src="/img/billing-statements.png" alt="Billing Statements" />
-      </td>
-    </tr>
-  </table>
-</div>
-
----
-
-## ✨ Key Features
-
-- **⚡ Out-of-Band RFB WebSocket Proxy:** Direct non-blocking binary stream pass-through via FastAPI to Proxmox VE's `vncwebsocket` daemon, completely eliminating client-side SSL and self-signed certificate hurdles.
-- **🛡️ Multi-Tenant RBAC Partitioning:** Strict isolation separating SuperAdmins, Tenant Administrators, Read-only Viewers, and Financial Operators.
-- **📊 Bare-Metal Telemetry Ingestion:** Real-time polling of host socket topologies, memory pools, root storage pools, and kernel versions.
-- **🎮 Guest Lifecycle Controls:** Start, graceful shutdown, and console triggers guarded by strict tenant ownership checks.
-- **💼 Integrated Sovereign CMP Suite:** Native operational workspaces, customer accounts, billing invoices, tasks queue, documentation vault, and support channels.
-
----
-
-## 🏛️ Initial System Architecture (Beta)
+## 🏛️ System Architecture
 
 ```text
-  ┌────────────────────────────────────────────────────────┐
-  │         React + TypeScript Frontend (Vite)             │
-  │     (noVNC RFB Canvas + CMP Scaffolding + TailWind)    │
-  └───────────────────────────┬────────────────────────────┘
-                              │ HTTP / WS (ws://localhost:8000)
-                              ▼
-  ┌────────────────────────────────────────────────────────┐
-  │                 FastAPI Control Plane                  │
-  │   - Multi-Tenant RBAC Dependency Engine                │
-  │   - Ephemeral VNC Ticket Session Acquisition           │
-  │   - Bidirectional Async RFB WebSocket Bridge           │
-  └───────────────────────────┬────────────────────────────┘
-                              │ TLS (Self-Signed / Port 8006)
-                              ▼
-  ┌────────────────────────────────────────────────────────┐
-  │              Proxmox Virtual Environment               │
-  │   - QEMU Virtual Machines / LXC Containers             │
-  │   - /api2/json/access/ticket & /vncwebsocket daemons   │
-  └────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                         React / Vite Frontend (SPA)                            │
+│                                                                                │
+│  [Persona Selector]        [Horizon Engine]         [noVNC RFB HTML5 Canvas]   │
+│  (SuperAdmin / Tenants)    (Week / Month / Quarter) (Scale Viewport + Auto-Fit)│
+└──────────────────────────────────────┬─────────────────────────────────────────┘
+                                       │
+            HTTP/REST (Port 8000)      │      Raw Binary WS (Port 8000)
+            [X-User-Role, X-Tenant-Id] │      [/api/v1/ws/vnc/...]
+                                       ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                           FastAPI Control Plane                                │
+│                                                                                │
+│   ┌───────────────────────────────┐     ┌──────────────────────────────────┐   │
+│   │ Multi-Tenant RBAC Dependency  │     │ Asynchronous RFB Reverse Proxy   │   │
+│   │  - Identity & Boundary Check  │     │  - inspect.signature Handshake   │   │
+│   │  - VM Partition Isolation     │     │  - Safe Ticket/Cookie Forwarding │   │
+│   │  - Action Guard (Power/VNC)   │     │  - Non-Blocking Binary Framing   │   │
+│   └──────────────┬────────────────┘     └─────────────────┬────────────────┘   │
+└──────────────────┼────────────────────────────────────────┼────────────────────┘
+                   │                                        │
+                   │ TLS REST (Port 8006)                   │ WSS Tunnel (Port 8006)
+                   │ PVEAuthCookie + CSRF                   │ Cookie: PVEAuthCookie
+                   ▼                                        ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                         Proxmox VE Hypervisor Node                             │
+│                                                                                │
+│   ┌───────────────────────────────┐     ┌──────────────────────────────────┐   │
+│   │ /api2/json Control Endpoints  │     │ internal /vncwebsocket Daemon    │   │
+│   │  - /cluster/resources         │     │  - Direct QEMU / KVM Socket      │   │
+│   │  - /nodes/{node}/status       │     │  - LXC Pseudo-Terminal Pipe      │   │
+│   │  - /nodes/.../status/{action} │     └──────────────────────────────────┘   │
+│   └───────────────────────────────┘                                            │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```

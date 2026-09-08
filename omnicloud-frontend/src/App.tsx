@@ -6,18 +6,14 @@
  *    CRM progress, revenue MRR, completed task velocity, and tenant provisioning rates.
  * 2. Cryptographic JWT Authentication: Requests signed Bearer tokens from /api/v1/auth/login and
  *    attaches Authorization headers across all protected endpoints.
- * 3. Multi-Tenant RBAC Integration: Evaluates active persona boundaries (SuperAdmin, TenantAdmin,
- *    TenantViewer, BillingManager) across infrastructure actions and financial records. Strict
- *    session isolation is enforced.
- * 4. Notion Two-Way Sync: Notes and Future Upgrades are fetched from and pushed to multiple Notion databases,
- *    supporting Title, Tag, Snippet, Author, and custom Date properties.
- * 5. Functional Modules Scaffolding:
- *    - Tasks: Filterable, interactive status toggle (Pending -> In Progress -> Completed).
- *    - Calendar: Maintenance windows, scheduled audit slots, and hypervisor kernel patch timelines.
- *    - Upgrades: Syncs Hardware/Software expansion proposals with a dedicated Notion database.
- *    - Notes: Notion-backed SOP repository with interactive tag filtering (Infrastructure, Security, Update).
- *    - Chats: Support channel switcher with real-time interactive message broadcasting.
- *    - Apps: Sovereign cloud integration marketplace (Wazuh SIEM, OpenObserve, Vault, Prometheus).
+ * 3. Multi-Tenant RBAC Integration: Evaluates active persona boundaries across infrastructure actions.
+ * 4. Rich Bare-Metal Telemetry & Real-Time SVG Graphs:
+ *    - CPU usage area graph with load averages and IO wait percentage.
+ *    - Memory & Swap dual utilization charts.
+ *    - Storage tier breakdowns (SSD rootfs vs. HDD secondary pools and physical disk SMART health).
+ *    - Live Inbound (RX) vs. Outbound (TX) network bandwidth throughput graph.
+ *    - System uptime and boot telemetry indicators.
+ * 5. Notion Two-Way Sync: Notes (Runbooks) and Future Upgrades & Expansion across separate databases.
  */
 
 import React, { useState, useEffect, useMemo } from "react";
@@ -53,6 +49,10 @@ import {
   LogOut,
   KeyRound,
   Zap,
+  Radio,
+  Disc,
+  Layers,
+  ShieldCheck,
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
 
@@ -110,12 +110,87 @@ interface GuestResource {
   cpu_usage_pct: number;
 }
 
+interface StoragePool {
+  name: string;
+  type: string;
+  category: string;
+  total_gb: number;
+  used_gb: number;
+  free_gb: number;
+  usage_pct: number;
+  active: boolean;
+}
+
+interface PhysicalDisk {
+  devpath: string;
+  model: string;
+  size_gb: number;
+  type: string;
+  health: string;
+  serial: string;
+}
+
+interface NetworkInterface {
+  name: string;
+  type: string;
+  active: boolean;
+  address: string;
+  comment: string;
+}
+
+interface TelemetrySample {
+  time: string;
+  cpu: number;
+  memory: number;
+  net_in: number;
+  net_out: number;
+  storage: number;
+  iowait: number;
+}
+
 interface NodeTelemetry {
   node: string;
-  cpu: { usage_pct: number; cores: number; sockets: number; model: string };
-  memory: { used_gb: number; total_gb: number; usage_pct: number };
-  storage: { used_gb: number; total_gb: number; usage_pct: number };
-  system: { pve_version: string; kernel_version: string; uptime: number };
+  cpu: {
+    usage_pct: number;
+    cores: number;
+    sockets: number;
+    model: string;
+    mhz: string;
+    loadavg: number[];
+    iowait_pct: number;
+  };
+  memory: {
+    used_gb: number;
+    total_gb: number;
+    free_gb: number;
+    usage_pct: number;
+    swap_used_gb: number;
+    swap_total_gb: number;
+    swap_pct: number;
+  };
+  storage: {
+    rootfs: {
+      used_gb: number;
+      total_gb: number;
+      free_gb: number;
+      usage_pct: number;
+    };
+    pools: StoragePool[];
+    disks: PhysicalDisk[];
+  };
+  network: {
+    interfaces: NetworkInterface[];
+    rx_rate_kbps: number;
+    tx_rate_kbps: number;
+  };
+  system: {
+    pve_version: string;
+    kernel_version: string;
+    uptime_seconds: number;
+    uptime_formatted: string;
+    boot_time: string;
+  };
+  history: TelemetrySample[];
 }
 
 interface TaskItem {
@@ -156,6 +231,433 @@ interface UpgradeItem {
   requested_by: string;
   date_added: string;
 }
+
+// ---------------------------------------------------------------------------
+// Native SVG Interactive Graph Components
+// ---------------------------------------------------------------------------
+
+function TelemetryAreaChart({
+  data,
+  dataKey,
+  color,
+  gradientId,
+  unit = "%",
+  maxValue = 100,
+}: {
+  data: TelemetrySample[];
+  dataKey: keyof TelemetrySample;
+  color: string;
+  gradientId: string;
+  unit?: string;
+  maxValue?: number;
+}) {
+  const [hoveredIdx, setHoveredIdx] = React.useState<number | null>(null);
+
+  if (!data || data.length === 0) {
+    return (
+      <div className="h-44 w-full flex items-center justify-center text-zinc-600 text-xs font-mono">
+        Waiting for telemetry frames...
+      </div>
+    );
+  }
+
+  const width = 600;
+  const height = 170;
+  const padding = 20;
+
+  // Lock the X-axis to a maximum of 30 points so it fills left-to-right
+  const maxDataPoints = 30;
+  const step = (width - 2 * padding) / Math.max(maxDataPoints - 1, 1);
+
+  const points = data.map((d, index) => {
+    const rawVal = Number(d[dataKey]) || 0;
+    const clampedVal = Math.min(Math.max(rawVal, 0), maxValue);
+
+    // Start from the left edge and progress to the right
+    const x = padding + index * step;
+    const y =
+      height - padding - (clampedVal / maxValue) * (height - 2 * padding);
+
+    return { x, y, val: rawVal, time: d.time };
+  });
+
+  const pathD = points.reduce(
+    (acc, pt, i) => `${acc} ${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`,
+    "",
+  );
+  const areaD = `${pathD} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
+
+  return (
+    <div className="w-full relative" onMouseLeave={() => setHoveredIdx(null)}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="w-full h-44 overflow-visible"
+      >
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.35" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.0" />
+          </linearGradient>
+        </defs>
+
+        {/* Grid lines */}
+        {[0, 0.25, 0.5, 0.75, 1].map((p, idx) => {
+          const y = height - padding - p * (height - 2 * padding);
+          return (
+            <line
+              key={idx}
+              x1={padding}
+              y1={y}
+              x2={width - padding}
+              y2={y}
+              stroke="#27272a"
+              strokeDasharray="3 3"
+              strokeWidth="1"
+            />
+          );
+        })}
+
+        {/* Area and Line Path */}
+        <path
+          d={areaD}
+          fill={`url(#${gradientId})`}
+          className="transition-all duration-500 ease-linear"
+        />
+        <path
+          d={pathD}
+          fill="none"
+          stroke={color}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          className="transition-all duration-500 ease-linear"
+        />
+
+        {/* Invisible hit-boxes for Hover Tooltips */}
+        {points.map((pt, i) => (
+          <rect
+            key={`hit-${i}`}
+            x={pt.x - step / 2}
+            y={0}
+            width={step}
+            height={height}
+            fill="transparent"
+            className="cursor-crosshair outline-none"
+            onMouseEnter={() => setHoveredIdx(i)}
+          />
+        ))}
+
+        {/* Interactive Hover Tooltip & Crosshair */}
+        {hoveredIdx !== null && points[hoveredIdx] && (
+          <g className="pointer-events-none transition-all duration-75">
+            {/* Vertical Guide Line */}
+            <line
+              x1={points[hoveredIdx].x}
+              y1={padding}
+              x2={points[hoveredIdx].x}
+              y2={height - padding}
+              stroke="#71717a"
+              strokeDasharray="3 3"
+            />
+
+            {/* Tooltip Background (Math.max/min prevents clipping off edges) */}
+            <rect
+              x={Math.max(0, Math.min(points[hoveredIdx].x - 35, width - 70))}
+              y={0}
+              width={70}
+              height={34}
+              fill="#18181b"
+              rx="6"
+              stroke="#3f3f46"
+            />
+
+            {/* Tooltip Text */}
+            <text
+              x={Math.max(35, Math.min(points[hoveredIdx].x, width - 35))}
+              y={13}
+              fill="#a1a1aa"
+              fontSize="9"
+              fontFamily="monospace"
+              textAnchor="middle"
+            >
+              {points[hoveredIdx].time}
+            </text>
+            <text
+              x={Math.max(35, Math.min(points[hoveredIdx].x, width - 35))}
+              y={26}
+              fill={color}
+              fontSize="11"
+              fontFamily="monospace"
+              textAnchor="middle"
+              fontWeight="bold"
+            >
+              {points[hoveredIdx].val.toFixed(1)}
+              {unit}
+            </text>
+
+            {/* Point Highlight */}
+            <circle
+              cx={points[hoveredIdx].x}
+              cy={points[hoveredIdx].y}
+              r="4.5"
+              fill="#ffffff"
+              stroke={color}
+              strokeWidth="2"
+            />
+          </g>
+        )}
+
+        {/* Real-time head pulse dot (only visible when not hovering on historical points) */}
+        {points.length > 0 && hoveredIdx === null && (
+          <>
+            <circle
+              cx={points[points.length - 1].x}
+              cy={points[points.length - 1].y}
+              r="4.5"
+              fill={color}
+              className="animate-ping transition-all duration-500 ease-linear"
+            />
+            <circle
+              cx={points[points.length - 1].x}
+              cy={points[points.length - 1].y}
+              r="4"
+              fill="#ffffff"
+              stroke={color}
+              strokeWidth="2"
+              className="transition-all duration-500 ease-linear"
+            />
+          </>
+        )}
+      </svg>
+
+      <div className="flex justify-between text-[10px] font-mono text-zinc-500 mt-1 px-2">
+        <span>{points[0]?.time || ""}</span>
+        <span className="text-zinc-400 font-semibold">
+          Now: {points[points.length - 1]?.val} {unit}
+        </span>
+        <span>{points[points.length - 1]?.time || ""}</span>
+      </div>
+    </div>
+  );
+}
+
+function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
+  const [hoveredIdx, setHoveredIdx] = React.useState<number | null>(null);
+
+  if (!data || data.length === 0) {
+    return (
+      <div className="h-44 w-full flex items-center justify-center text-zinc-600 text-xs font-mono">
+        Polling network buffer...
+      </div>
+    );
+  }
+
+  const width = 600;
+  const height = 170;
+  const padding = 20;
+
+  const maxDataPoints = 30;
+  const step = (width - 2 * padding) / Math.max(maxDataPoints - 1, 1);
+
+  const maxRate = Math.max(
+    ...data.map((d) => Math.max(Number(d.net_in) || 0, Number(d.net_out) || 0)),
+    50,
+  );
+
+  const getPoints = (key: "net_in" | "net_out") =>
+    data.map((d, index) => {
+      const val = Number(d[key]) || 0;
+      const x = padding + index * step;
+      const y = height - padding - (val / maxRate) * (height - 2 * padding);
+      return { x, y, val, time: d.time };
+    });
+
+  const rxPoints = getPoints("net_in");
+  const txPoints = getPoints("net_out");
+
+  const buildPath = (pts: { x: number; y: number }[]) =>
+    pts.reduce(
+      (acc, pt, i) => `${acc} ${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`,
+      "",
+    );
+
+  return (
+    <div className="w-full relative" onMouseLeave={() => setHoveredIdx(null)}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="w-full h-44 overflow-visible"
+      >
+        <defs>
+          <linearGradient id="rxGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#10b981" stopOpacity="0.25" />
+            <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
+          </linearGradient>
+          <linearGradient id="txGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#6366f1" stopOpacity="0.2" />
+            <stop offset="100%" stopColor="#6366f1" stopOpacity="0.0" />
+          </linearGradient>
+        </defs>
+
+        {/* Horizontal grid guide */}
+        {[0, 0.5, 1].map((p, idx) => {
+          const y = height - padding - p * (height - 2 * padding);
+          return (
+            <line
+              key={idx}
+              x1={padding}
+              y1={y}
+              x2={width - padding}
+              y2={y}
+              stroke="#27272a"
+              strokeDasharray="3 3"
+              strokeWidth="1"
+            />
+          );
+        })}
+
+        <path
+          d={`${buildPath(rxPoints)} L ${rxPoints[rxPoints.length - 1].x} ${height - padding} L ${rxPoints[0].x} ${height - padding} Z`}
+          fill="url(#rxGrad)"
+          className="transition-all duration-500 ease-linear"
+        />
+        <path
+          d={buildPath(rxPoints)}
+          fill="none"
+          stroke="#10b981"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          className="transition-all duration-500 ease-linear"
+        />
+
+        <path
+          d={`${buildPath(txPoints)} L ${txPoints[txPoints.length - 1].x} ${height - padding} L ${txPoints[0].x} ${height - padding} Z`}
+          fill="url(#txGrad)"
+          className="transition-all duration-500 ease-linear"
+        />
+        <path
+          d={buildPath(txPoints)}
+          fill="none"
+          stroke="#818cf8"
+          strokeWidth="2.2"
+          strokeDasharray="4 2"
+          className="transition-all duration-500 ease-linear"
+        />
+
+        {/* Invisible hit-boxes for Hover Tooltips */}
+        {rxPoints.map((pt, i) => (
+          <rect
+            key={`hit-${i}`}
+            x={pt.x - step / 2}
+            y={0}
+            width={step}
+            height={height}
+            fill="transparent"
+            className="cursor-crosshair outline-none"
+            onMouseEnter={() => setHoveredIdx(i)}
+          />
+        ))}
+
+        {/* Interactive Hover Tooltip & Crosshairs */}
+        {hoveredIdx !== null &&
+          rxPoints[hoveredIdx] &&
+          txPoints[hoveredIdx] && (
+            <g className="pointer-events-none transition-all duration-75">
+              <line
+                x1={rxPoints[hoveredIdx].x}
+                y1={padding}
+                x2={rxPoints[hoveredIdx].x}
+                y2={height - padding}
+                stroke="#71717a"
+                strokeDasharray="3 3"
+              />
+
+              <rect
+                x={Math.max(
+                  0,
+                  Math.min(rxPoints[hoveredIdx].x - 45, width - 90),
+                )}
+                y={0}
+                width={90}
+                height={46}
+                fill="#18181b"
+                rx="6"
+                stroke="#3f3f46"
+              />
+
+              <text
+                x={Math.max(45, Math.min(rxPoints[hoveredIdx].x, width - 45))}
+                y={12}
+                fill="#a1a1aa"
+                fontSize="9"
+                fontFamily="monospace"
+                textAnchor="middle"
+              >
+                {rxPoints[hoveredIdx].time}
+              </text>
+              <text
+                x={Math.max(45, Math.min(rxPoints[hoveredIdx].x, width - 45))}
+                y={25}
+                fill="#10b981"
+                fontSize="10"
+                fontFamily="monospace"
+                textAnchor="middle"
+                fontWeight="bold"
+              >
+                RX: {rxPoints[hoveredIdx].val.toFixed(1)} KB/s
+              </text>
+              <text
+                x={Math.max(45, Math.min(txPoints[hoveredIdx].x, width - 45))}
+                y={38}
+                fill="#818cf8"
+                fontSize="10"
+                fontFamily="monospace"
+                textAnchor="middle"
+                fontWeight="bold"
+              >
+                TX: {txPoints[hoveredIdx].val.toFixed(1)} KB/s
+              </text>
+
+              <circle
+                cx={rxPoints[hoveredIdx].x}
+                cy={rxPoints[hoveredIdx].y}
+                r="3.5"
+                fill="#ffffff"
+                stroke="#10b981"
+                strokeWidth="2"
+              />
+              <circle
+                cx={txPoints[hoveredIdx].x}
+                cy={txPoints[hoveredIdx].y}
+                r="3.5"
+                fill="#ffffff"
+                stroke="#818cf8"
+                strokeWidth="2"
+              />
+            </g>
+          )}
+      </svg>
+
+      <div className="flex justify-between items-center text-[10px] font-mono text-zinc-500 mt-1 px-2">
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-1 text-emerald-400">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />{" "}
+            RX: {rxPoints[rxPoints.length - 1]?.val.toFixed(1)} KB/s
+          </span>
+          <span className="flex items-center gap-1 text-indigo-400">
+            <span className="w-2 h-2 rounded-full bg-indigo-400 inline-block" />{" "}
+            TX: {txPoints[txPoints.length - 1]?.val.toFixed(1)} KB/s
+          </span>
+        </div>
+        <span className="text-zinc-500">
+          Peak Window: {Math.round(maxRate)} KB/s
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main Dashboard Application
+// ---------------------------------------------------------------------------
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<
@@ -469,7 +971,7 @@ export default function App() {
       const interval = setInterval(() => {
         fetchResources();
         fetchTelemetry();
-      }, 4000);
+      }, 3500);
       return () => clearInterval(interval);
     }
   }, [authToken, currentUser]);
@@ -477,6 +979,7 @@ export default function App() {
   useEffect(() => {
     if (authToken && activeTab === "notes") fetchNotes();
     if (authToken && activeTab === "upgrades") fetchUpgrades();
+    if (authToken && activeTab === "analytics") fetchTelemetry();
   }, [authToken, activeTab]);
 
   const handlePowerAction = async (
@@ -692,6 +1195,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-[#0d0d0f] text-zinc-100 font-sans antialiased overflow-hidden selection:bg-zinc-800">
+      {/* Sidebar Navigation */}
       <aside className="w-64 bg-[#121214] border-r border-zinc-800/80 flex flex-col justify-between shrink-0">
         <div className="p-4 flex flex-col h-full">
           <div className="p-3 bg-[#18181b] border border-zinc-800 rounded-xl mb-6 shadow-sm">
@@ -755,17 +1259,24 @@ export default function App() {
       </aside>
 
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
+        {/* Header Bar */}
         <header className="h-16 border-b border-zinc-800/80 bg-[#121214]/60 backdrop-blur-md px-8 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-6">
             <h1 className="text-lg font-bold text-white tracking-tight capitalize">
-              {activeTab === "upgrades" ? "Future Upgrades" : activeTab}
+              {activeTab === "upgrades"
+                ? "Future Upgrades & Expansion"
+                : activeTab}
             </h1>
             <div className="bg-[#18181b] p-1 rounded-xl border border-zinc-800 flex items-center shadow-inner">
               {(["week", "month", "quarter"] as const).map((filter) => (
                 <button
                   key={filter}
                   onClick={() => setTimeFilter(filter)}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-all ${timeFilter === filter ? "bg-zinc-800 text-white shadow-sm border border-zinc-700/60" : "text-zinc-400 hover:text-zinc-200"}`}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-all ${
+                    timeFilter === filter
+                      ? "bg-zinc-800 text-white shadow-sm border border-zinc-700/60"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
                 >
                   This {filter}
                 </button>
@@ -878,7 +1389,7 @@ export default function App() {
                 {resources.length === 0 ? (
                   <div className="p-12 text-center text-xs text-zinc-500 font-mono">
                     {currentUser.role === "BillingManager"
-                      ? "Billing Manager Role has no permission to view active compute instances."
+                      ? "Billing Manager Role has no permission to view compute instances."
                       : "No instances assigned to this tenant workspace."}
                   </div>
                 ) : (
@@ -979,7 +1490,6 @@ export default function App() {
                               <button
                                 disabled
                                 className="p-1.5 bg-zinc-800/40 text-zinc-600 rounded-lg border border-zinc-800"
-                                title="Power controls restricted to Admins"
                               >
                                 <Lock className="w-3.5 h-3.5" />
                               </button>
@@ -994,79 +1504,266 @@ export default function App() {
             </>
           )}
 
-          {/* ================= ANALYTICS VIEW ================= */}
+          {/* ================= TELEMETRY ANALYTICS WITH GRAPHS ================= */}
           {activeTab === "analytics" && canViewHostTelemetry && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
-                  <div className="flex items-center justify-between text-zinc-400 mb-2">
-                    <span className="text-xs font-semibold">
-                      Cluster Aggregated CPU
+              {/* Top System Health Bar */}
+              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Radio className="w-4 h-4 text-emerald-400 animate-pulse" />
+                    <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                      Proxmox Host: {telemetry?.node || "pve-node"}
+                    </h2>
+                    <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-mono">
+                      Bare-Metal Online
                     </span>
-                    <Cpu className="w-4 h-4 text-indigo-400" />
                   </div>
-                  <div className="text-2xl font-bold text-white font-mono">
-                    {telemetry ? `${telemetry.cpu.usage_pct}%` : "---"}
-                  </div>
-                  <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-4 overflow-hidden">
-                    <div
-                      className="bg-indigo-500 h-full transition-all duration-500"
-                      style={{ width: `${telemetry?.cpu.usage_pct || 0}%` }}
-                    ></div>
-                  </div>
-                  <p className="text-[11px] text-zinc-500 mt-2 truncate">
-                    {telemetry
-                      ? `${telemetry.cpu.cores} Cores (${telemetry.cpu.sockets} Sockets) • ${telemetry.cpu.model}`
-                      : "Polling CPU sockets..."}
+                  <p className="text-xs text-zinc-400 mt-1 font-mono">
+                    {telemetry?.system.pve_version} • Kernel{" "}
+                    {telemetry?.system.kernel_version}
                   </p>
                 </div>
-                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
-                  <div className="flex items-center justify-between text-zinc-400 mb-2">
-                    <span className="text-xs font-semibold">
-                      Host Physical RAM
+
+                <div className="flex items-center gap-6 text-xs font-mono text-zinc-400 bg-zinc-900/90 border border-zinc-800 px-4 py-2.5 rounded-xl">
+                  <div>
+                    <span className="text-zinc-500 block text-[10px] uppercase">
+                      Node Uptime
                     </span>
-                    <HardDrive className="w-4 h-4 text-emerald-400" />
+                    <strong className="text-white text-sm">
+                      {telemetry?.system.uptime_formatted || "---"}
+                    </strong>
                   </div>
-                  <div className="text-2xl font-bold text-white font-mono">
-                    {telemetry
-                      ? `${telemetry.memory.used_gb} / ${telemetry.memory.total_gb} GB`
-                      : "---"}
+                  <div className="border-l border-zinc-800 pl-4">
+                    <span className="text-zinc-500 block text-[10px] uppercase">
+                      Boot Timestamp
+                    </span>
+                    <span className="text-zinc-300">
+                      {telemetry?.system.boot_time || "---"}
+                    </span>
                   </div>
-                  <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-4 overflow-hidden">
-                    <div
-                      className="bg-emerald-500 h-full transition-all duration-500"
-                      style={{ width: `${telemetry?.memory.usage_pct || 0}%` }}
-                    ></div>
+                  <div className="border-l border-zinc-800 pl-4">
+                    <span className="text-zinc-500 block text-[10px] uppercase">
+                      Load Averages
+                    </span>
+                    <span className="text-emerald-400 font-bold">
+                      {telemetry?.cpu.loadavg?.slice(0, 3).join(", ") ||
+                        "0.10, 0.15, 0.20"}
+                    </span>
                   </div>
-                  <p className="text-[11px] text-zinc-500 mt-2">
-                    {telemetry
-                      ? `${telemetry.memory.usage_pct}% allocated memory pool`
-                      : "Calculating system RAM..."}
-                  </p>
                 </div>
-                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
-                  <div className="flex items-center justify-between text-zinc-400 mb-2">
-                    <span className="text-xs font-semibold">
-                      Local Rootfs Storage
-                    </span>
-                    <Activity className="w-4 h-4 text-sky-400" />
+              </div>
+
+              {/* Primary Graphs Row: CPU Usage & Memory Graphs */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* CPU Telemetry & Real-Time Graph */}
+                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Cpu className="w-4 h-4 text-emerald-400" />
+                        <h3 className="text-sm font-bold text-white">
+                          CPU Usage Graph
+                        </h3>
+                      </div>
+                      <span className="text-lg font-bold text-white font-mono">
+                        {telemetry?.cpu.usage_pct || 0}%
+                      </span>
+                    </div>
+                    <p className="text-xs text-zinc-500 font-mono mb-4">
+                      {telemetry?.cpu.cores} Logical Cores (
+                      {telemetry?.cpu.sockets} Socket) • IO Wait:{" "}
+                      {telemetry?.cpu.iowait_pct || 0}%
+                    </p>
                   </div>
-                  <div className="text-2xl font-bold text-white font-mono">
-                    {telemetry
-                      ? `${telemetry.storage.used_gb} / ${telemetry.storage.total_gb} GB`
-                      : "---"}
+
+                  <TelemetryAreaChart
+                    data={telemetry?.history || []}
+                    dataKey="cpu"
+                    color="#10b981"
+                    gradientId="cpuTelemetryGrad"
+                    unit="%"
+                    maxValue={100}
+                  />
+                </div>
+
+                {/* Memory & Swap Telemetry Graph */}
+                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <HardDrive className="w-4 h-4 text-indigo-400" />
+                        <h3 className="text-sm font-bold text-white">
+                          Memory Usage Graph
+                        </h3>
+                      </div>
+                      <span className="text-lg font-bold text-white font-mono">
+                        {telemetry?.memory.usage_pct || 0}%
+                      </span>
+                    </div>
+                    <p className="text-xs text-zinc-500 font-mono mb-4">
+                      {telemetry?.memory.used_gb} GB used of{" "}
+                      {telemetry?.memory.total_gb} GB total • Swap:{" "}
+                      {telemetry?.memory.swap_used_gb} GB (
+                      {telemetry?.memory.swap_pct}%)
+                    </p>
                   </div>
-                  <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-4 overflow-hidden">
-                    <div
-                      className="bg-sky-500 h-full transition-all duration-500"
-                      style={{ width: `${telemetry?.storage.usage_pct || 0}%` }}
-                    ></div>
+
+                  <TelemetryAreaChart
+                    data={telemetry?.history || []}
+                    dataKey="memory"
+                    color="#6366f1"
+                    gradientId="memTelemetryGrad"
+                    unit="%"
+                    maxValue={100}
+                  />
+                </div>
+              </div>
+
+              {/* Second Graphs Row: Network Bandwidth & Storage Pools */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Network Traffic & Bandwidth Graph */}
+                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Activity className="w-4 h-4 text-sky-400" />
+                        <h3 className="text-sm font-bold text-white">
+                          Network Traffic & Bandwidth Usage
+                        </h3>
+                      </div>
+                      <span className="text-xs font-mono text-zinc-400">
+                        Throughput Stream
+                      </span>
+                    </div>
+                    <p className="text-xs text-zinc-500 font-mono mb-4">
+                      Real-time ingress (RX) vs egress (TX) packet streams
+                      across bridged hypervisor interfaces
+                    </p>
                   </div>
-                  <p className="text-[11px] text-zinc-500 mt-2">
-                    {telemetry
-                      ? `${telemetry.storage.usage_pct}% storage capacity utilized`
-                      : "Reading local storage..."}
-                  </p>
+
+                  <NetworkThroughputChart data={telemetry?.history || []} />
+
+                  {/* Active Network Interfaces Badges */}
+                  <div className="mt-4 pt-4 border-t border-zinc-800 flex flex-wrap items-center gap-2">
+                    {telemetry?.network.interfaces?.map((iface) => (
+                      <span
+                        key={iface.name}
+                        className="px-2.5 py-1 bg-zinc-900 border border-zinc-800 rounded-lg text-[10px] font-mono text-zinc-300 flex items-center gap-1.5"
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${iface.active ? "bg-emerald-400" : "bg-zinc-600"}`}
+                        />
+                        <strong>{iface.name}</strong> ({iface.address})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Storage Telemetry: SSD vs HDD Root Storage Breakdown */}
+                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Layers className="w-4 h-4 text-amber-400" />
+                        <h3 className="text-sm font-bold text-white">
+                          Root & Pool Storage (SSD vs. HDD)
+                        </h3>
+                      </div>
+                      <span className="text-xs font-mono text-zinc-400">
+                        Rootfs: {telemetry?.storage.rootfs.usage_pct}%
+                      </span>
+                    </div>
+                    <p className="text-xs text-zinc-500 font-mono mb-4">
+                      Storage partitions, NVMe/Flash volume allocations, and
+                      mechanical block storage
+                    </p>
+                  </div>
+
+                  {/* Primary Rootfs Meter Bar */}
+                  <div className="space-y-4">
+                    <div>
+                      <div className="flex justify-between text-xs font-mono text-zinc-400 mb-1">
+                        <span>SSD Root System (/rootfs)</span>
+                        <span>
+                          {telemetry?.storage.rootfs.used_gb} /{" "}
+                          {telemetry?.storage.rootfs.total_gb} GB (
+                          {telemetry?.storage.rootfs.usage_pct}%)
+                        </span>
+                      </div>
+                      <div className="w-full bg-zinc-800 h-2.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-amber-500 h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${telemetry?.storage.rootfs.usage_pct || 0}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Discovered Storage Pools (SSD / HDD) */}
+                    <div className="space-y-2 mt-4">
+                      {telemetry?.storage.pools?.map((pool) => (
+                        <div
+                          key={pool.name}
+                          className="p-3 bg-zinc-900/80 border border-zinc-800 rounded-xl flex items-center justify-between text-xs font-mono"
+                        >
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-white font-bold">
+                                {pool.name}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                                  pool.category.includes("SSD")
+                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                    : "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                                }`}
+                              >
+                                {pool.category}
+                              </span>
+                              <span className="text-[10px] text-zinc-500">
+                                [{pool.type}]
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-zinc-400 mt-0.5 block">
+                              {pool.used_gb} GB used • {pool.free_gb} GB free
+                            </span>
+                          </div>
+
+                          <div className="text-right">
+                            <span className="text-sm font-bold text-white">
+                              {pool.usage_pct}%
+                            </span>
+                            <div className="w-20 bg-zinc-800 h-1.5 rounded-full mt-1 overflow-hidden">
+                              <div
+                                className="bg-emerald-400 h-full"
+                                style={{ width: `${pool.usage_pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Physical Disks Info */}
+                  <div className="mt-4 pt-4 border-t border-zinc-800 flex flex-wrap gap-2">
+                    {telemetry?.storage.disks?.map((disk) => (
+                      <div
+                        key={disk.devpath}
+                        className="px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-[10px] font-mono text-zinc-300 flex items-center gap-2"
+                      >
+                        <Disc className="w-3.5 h-3.5 text-zinc-500" />
+                        <span>
+                          {disk.devpath} ({disk.type}) - {disk.size_gb} GB
+                        </span>
+                        <span className="text-emerald-400 font-bold flex items-center gap-0.5">
+                          <ShieldCheck className="w-3 h-3" /> {disk.health}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1432,7 +2129,11 @@ export default function App() {
                         </td>
                         <td className="px-6 py-4">
                           <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${task.priority === "High" ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" : "bg-amber-500/10 text-amber-400 border border-amber-500/20"}`}
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              task.priority === "High"
+                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                            }`}
                           >
                             {task.priority}
                           </span>
@@ -1446,7 +2147,13 @@ export default function App() {
                         <td className="px-6 py-4 text-right">
                           <button
                             onClick={() => toggleTaskStatus(task.id)}
-                            className={`px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-all ${task.status === "Completed" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : task.status === "In Progress" ? "bg-sky-500/10 text-sky-400 border-sky-500/20 hover:bg-sky-500/20" : "bg-zinc-800/60 text-zinc-400 border-zinc-700 hover:bg-zinc-800"}`}
+                            className={`px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-all ${
+                              task.status === "Completed"
+                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                                : task.status === "In Progress"
+                                  ? "bg-sky-500/10 text-sky-400 border-sky-500/20 hover:bg-sky-500/20"
+                                  : "bg-zinc-800/60 text-zinc-400 border-zinc-700 hover:bg-zinc-800"
+                            }`}
                           >
                             {task.status} ↻
                           </button>
@@ -1538,7 +2245,11 @@ export default function App() {
                         <button
                           key={tag}
                           onClick={() => setSelectedTag(tag)}
-                          className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${selectedTag === tag ? "bg-zinc-800 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
+                          className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
+                            selectedTag === tag
+                              ? "bg-zinc-800 text-white shadow-sm"
+                              : "text-zinc-400 hover:text-zinc-200"
+                          }`}
                         >
                           {tag}
                         </button>
@@ -1705,7 +2416,11 @@ export default function App() {
                     <button
                       key={ch}
                       onClick={() => setActiveChat(ch)}
-                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeChat === ch ? "bg-zinc-800 text-white font-semibold shadow-sm" : "text-zinc-400 hover:bg-zinc-800/40"}`}
+                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                        activeChat === ch
+                          ? "bg-zinc-800 text-white font-semibold shadow-sm"
+                          : "text-zinc-400 hover:bg-zinc-800/40"
+                      }`}
                     >
                       #{ch}
                     </button>
@@ -1789,7 +2504,11 @@ export default function App() {
                           {app.category}
                         </span>
                         <span
-                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${app.status === "Active" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-zinc-800 text-zinc-400"}`}
+                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                            app.status === "Active"
+                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                              : "bg-zinc-800 text-zinc-400"
+                          }`}
                         >
                           {app.status}
                         </span>

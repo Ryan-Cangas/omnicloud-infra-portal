@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone, date
 from typing import Optional, List
 from collections import deque
 from pathlib import Path
+import time
 
 import jwt
 import bcrypt
@@ -56,7 +57,11 @@ NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "")
 NOTION_UPGRADES_DATABASE_ID = os.getenv("NOTION_UPGRADES_DATABASE_ID", "")
 NOTION_VERSION = "2022-06-28"
 
+# Sliding window buffer to maintain graph telemetry points (up to 30 intervals)
 TELEMETRY_STREAM_BUFFER = deque(maxlen=30)
+
+# Global snapshot state to calculate instantaneous network throughput
+LAST_NETWORK_SNAPSHOT = {"time": 0.0, "netin": 0, "netout": 0}
 
 app = FastAPI(
     title="OmniOps Homelab Control Plane & Hypervisor Gateway",
@@ -236,6 +241,39 @@ def format_uptime(seconds: int) -> str:
         parts.append(f"{hours}h")
     parts.append(f"{minutes}m")
     return " ".join(parts) or "< 1m"
+
+def get_live_network_throughput(proxmox_client):
+    """
+    Computes real-time bandwidth delta (B/s -> KB/s) by summing cumulative bytes
+    across all active workloads. Avoids RRD averaging.
+    """
+    global LAST_NETWORK_SNAPSHOT
+    now = time.time()
+    total_rx = 0
+    total_tx = 0
+    
+    try:
+        vms = proxmox_client.cluster.resources.get(type="vm")
+        for vm in vms:
+            total_rx += int(vm.get("netin", 0))
+            total_tx += int(vm.get("netout", 0))
+    except Exception:
+        pass
+
+    dt = max(now - LAST_NETWORK_SNAPSHOT["time"], 1.0)
+    
+    if LAST_NETWORK_SNAPSHOT["time"] == 0.0 or total_rx < LAST_NETWORK_SNAPSHOT["netin"]:
+        rx_rate_bps = 0.0
+        tx_rate_bps = 0.0
+    else:
+        rx_rate_bps = (total_rx - LAST_NETWORK_SNAPSHOT["netin"]) / dt
+        tx_rate_bps = (total_tx - LAST_NETWORK_SNAPSHOT["netout"]) / dt
+
+    LAST_NETWORK_SNAPSHOT["time"] = now
+    LAST_NETWORK_SNAPSHOT["netin"] = total_rx
+    LAST_NETWORK_SNAPSHOT["netout"] = total_tx
+    
+    return round(rx_rate_bps / 1024, 2), round(tx_rate_bps / 1024, 2)
 
 # ---------------------------------------------------------------------------
 # Authentication Routes
@@ -451,41 +489,39 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
         mem_pct = round(min(max((memory.get("used", 0) / max(memory.get("total", 1), 1)) * 100, 0.0), 100.0), 2)
         storage_pct = round(min(max((root_fs.get("used", 0) / max(root_fs.get("total", 1), 1)) * 100, 0.0), 100.0), 2)
         iowait_pct = round(float(node_status.get("wait", 0.0)) * 100, 2)
+        
+        live_rx_kbps, live_tx_kbps = get_live_network_throughput(proxmox)
 
-        history_points = []
-        try:
-            rrd = proxmox.nodes(primary_node).rrddata.get(timeframe="hour")
-            if rrd:
-                for sample in rrd[-20:]:
-                    t_stamp = datetime.fromtimestamp(sample.get("time", 0)).strftime("%H:%M")
-                    c_val = round(min(max(sample.get("cpu", 0) * 100, 0.0), 100.0), 1)
-                    m_val = round(min(max((sample.get("memused", 0) / max(sample.get("memtotal", 1), 1)) * 100, 0.0), 100.0), 1)
-                    net_in = round(sample.get("netin", 0) / 1024, 1)
-                    net_out = round(sample.get("netout", 0) / 1024, 1)
-                    history_points.append({
-                        "time": t_stamp,
-                        "cpu": c_val,
-                        "memory": m_val,
-                        "net_in": net_in,
-                        "net_out": net_out,
-                        "storage": storage_pct,
-                        "iowait": round(sample.get("iowait", 0) * 100, 2)
-                    })
-        except Exception:
-            pass
+        if not TELEMETRY_STREAM_BUFFER:
+            try:
+                rrd = proxmox.nodes(primary_node).rrddata.get(timeframe="hour")
+                if rrd:
+                    for sample in rrd[-29:]:
+                        t_stamp = datetime.fromtimestamp(sample.get("time", 0)).strftime("%H:%M:%S")
+                        c_val = round(min(max(sample.get("cpu", 0) * 100, 0.0), 100.0), 1)
+                        m_val = round(min(max((sample.get("memused", 0) / max(sample.get("memtotal", 1), 1)) * 100, 0.0), 100.0), 1)
+                        TELEMETRY_STREAM_BUFFER.append({
+                            "time": t_stamp,
+                            "cpu": c_val,
+                            "memory": m_val,
+                            "net_in": round(float(sample.get("netin", 0.0)) / 1024, 1),
+                            "net_out": round(float(sample.get("netout", 0.0)) / 1024, 1),
+                            "storage": storage_pct,
+                            "iowait": round(sample.get("iowait", 0) * 100, 2)
+                        })
+            except Exception:
+                pass
 
         now_time_str = datetime.now().strftime("%H:%M:%S")
-        if not history_points:
-            TELEMETRY_STREAM_BUFFER.append({
-                "time": now_time_str,
-                "cpu": cpu_pct,
-                "memory": mem_pct,
-                "net_in": 124.5,
-                "net_out": 88.2,
-                "storage": storage_pct,
-                "iowait": iowait_pct
-            })
-            history_points = list(TELEMETRY_STREAM_BUFFER)
+        TELEMETRY_STREAM_BUFFER.append({
+            "time": now_time_str,
+            "cpu": cpu_pct,
+            "memory": mem_pct,
+            "net_in": live_rx_kbps,
+            "net_out": live_tx_kbps,
+            "storage": storage_pct,
+            "iowait": iowait_pct
+        })
 
         uptime_secs = node_status.get("uptime", 0)
 
@@ -521,8 +557,8 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
             },
             "network": {
                 "interfaces": net_interfaces,
-                "rx_rate_kbps": history_points[-1]["net_in"] if history_points else 0.0,
-                "tx_rate_kbps": history_points[-1]["net_out"] if history_points else 0.0,
+                "rx_rate_kbps": live_rx_kbps,
+                "tx_rate_kbps": live_tx_kbps,
             },
             "system": {
                 "pve_version": node_status.get("pveversion", "Proxmox VE"),
@@ -531,7 +567,7 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
                 "uptime_formatted": format_uptime(uptime_secs),
                 "boot_time": datetime.fromtimestamp(datetime.now().timestamp() - uptime_secs).strftime("%b %d, %Y %H:%M UTC") if uptime_secs else "N/A"
             },
-            "history": history_points
+            "history": list(TELEMETRY_STREAM_BUFFER)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

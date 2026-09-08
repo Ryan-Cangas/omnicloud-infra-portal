@@ -249,6 +249,14 @@ interface SecurityAuditLog {
 // Native SVG Interactive Graph Components
 // ---------------------------------------------------------------------------
 
+function formatSpeed(kbps: number) {
+  // Convert KB/s (Kilobytes/sec) to Mbps (Megabits/sec)
+  const mbps = (kbps * 8) / 1000;
+  if (mbps >= 1000) return `${(mbps / 1000).toFixed(2)} Gbps`;
+  if (mbps >= 1) return `${mbps.toFixed(1)} Mbps`;
+  return `${(kbps * 8).toFixed(0)} Kbps`;
+}
+
 function TelemetryAreaChart({
   data,
   dataKey,
@@ -564,17 +572,17 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
               <rect
                 x={Math.max(
                   0,
-                  Math.min(rxPoints[hoveredIdx].x - 45, width - 90),
+                  Math.min(rxPoints[hoveredIdx].x - 55, width - 110),
                 )}
                 y={0}
-                width={90}
+                width={110}
                 height={46}
                 fill="#18181b"
                 rx="6"
                 stroke="#3f3f46"
               />
               <text
-                x={Math.max(45, Math.min(rxPoints[hoveredIdx].x, width - 45))}
+                x={Math.max(55, Math.min(rxPoints[hoveredIdx].x, width - 55))}
                 y={12}
                 fill="#a1a1aa"
                 fontSize="9"
@@ -584,7 +592,7 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
                 {rxPoints[hoveredIdx].time}
               </text>
               <text
-                x={Math.max(45, Math.min(rxPoints[hoveredIdx].x, width - 45))}
+                x={Math.max(55, Math.min(rxPoints[hoveredIdx].x, width - 55))}
                 y={25}
                 fill="#10b981"
                 fontSize="10"
@@ -592,10 +600,10 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
                 textAnchor="middle"
                 fontWeight="bold"
               >
-                RX: {rxPoints[hoveredIdx].val.toFixed(1)} KB/s
+                RX: {formatSpeed(rxPoints[hoveredIdx].val)}
               </text>
               <text
-                x={Math.max(45, Math.min(txPoints[hoveredIdx].x, width - 45))}
+                x={Math.max(55, Math.min(txPoints[hoveredIdx].x, width - 55))}
                 y={38}
                 fill="#818cf8"
                 fontSize="10"
@@ -603,7 +611,7 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
                 textAnchor="middle"
                 fontWeight="bold"
               >
-                TX: {txPoints[hoveredIdx].val.toFixed(1)} KB/s
+                TX: {formatSpeed(txPoints[hoveredIdx].val)}
               </text>
               <circle
                 cx={rxPoints[hoveredIdx].x}
@@ -629,15 +637,15 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1 text-emerald-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />{" "}
-            RX: {rxPoints[rxPoints.length - 1]?.val.toFixed(1)} KB/s
+            RX: {formatSpeed(rxPoints[rxPoints.length - 1]?.val || 0)}
           </span>
           <span className="flex items-center gap-1 text-indigo-400">
             <span className="w-2 h-2 rounded-full bg-indigo-400 inline-block" />{" "}
-            TX: {txPoints[txPoints.length - 1]?.val.toFixed(1)} KB/s
+            TX: {formatSpeed(txPoints[txPoints.length - 1]?.val || 0)}
           </span>
         </div>
         <span className="text-zinc-500">
-          Peak Window: {Math.round(maxRate)} KB/s
+          Peak Window: {formatSpeed(maxRate)}
         </span>
       </div>
     </div>
@@ -1290,7 +1298,6 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-[#0d0d0f] text-zinc-100 font-sans antialiased overflow-hidden selection:bg-zinc-800">
-      {/* Sidebar Navigation */}
       <aside className="w-64 bg-[#121214] border-r border-zinc-800/80 flex flex-col justify-between shrink-0">
         <div className="p-4 flex flex-col h-full">
           <div className="p-3 bg-[#18181b] border border-zinc-800 rounded-xl mb-6 shadow-sm">
@@ -1354,7 +1361,6 @@ export default function App() {
       </aside>
 
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Header Bar */}
         <header className="h-16 border-b border-zinc-800/80 bg-[#121214]/60 backdrop-blur-md px-8 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-6">
             <h1 className="text-lg font-bold text-white tracking-tight capitalize">
@@ -1384,7 +1390,7 @@ export default function App() {
           {activeTab === "overview" && (
             <>
               {/* Core Infrastructure Metrics Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
                     <span className="text-xs font-semibold">
@@ -1425,22 +1431,6 @@ export default function App() {
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
                     <span className="text-xs font-semibold">
-                      Security Events (24h)
-                    </span>
-                    <ShieldCheck className="w-4 h-4 text-sky-400" />
-                  </div>
-                  <div className="mt-4">
-                    <span className="text-3xl font-bold text-white tracking-tight">
-                      {securityLogs.length}
-                    </span>
-                    <p className="text-[11px] text-zinc-400 mt-1">
-                      Wazuh & Fail2ban monitoring
-                    </p>
-                  </div>
-                </div>
-                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
-                  <div className="flex items-center justify-between text-zinc-400">
-                    <span className="text-xs font-semibold">
                       Network I/O Throughput
                     </span>
                     <Activity className="w-4 h-4 text-amber-400" />
@@ -1448,11 +1438,14 @@ export default function App() {
                   <div className="mt-4">
                     <span className="text-3xl font-bold text-white tracking-tight">
                       {telemetry
-                        ? `${telemetry.network.rx_rate_kbps} KB/s`
+                        ? formatSpeed(telemetry.network.rx_rate_kbps)
                         : "---"}
                     </span>
                     <p className="text-[11px] text-zinc-400 mt-1">
-                      Tailscale overlay routing
+                      Outbound:{" "}
+                      {telemetry
+                        ? formatSpeed(telemetry.network.tx_rate_kbps)
+                        : "---"}
                     </p>
                   </div>
                 </div>
@@ -2255,10 +2248,6 @@ export default function App() {
                     Scheduled ZFS scrubs, hypervisor patch procedures, and PBS
                     backup retention
                   </p>
-                </div>
-                <div className="text-xs font-mono text-zinc-400 bg-[#18181b] px-3 py-1.5 rounded-xl border border-zinc-800">
-                  Active Jobs:{" "}
-                  <strong className="text-white">{filteredTasks.length}</strong>
                 </div>
               </div>
 

@@ -7,13 +7,9 @@
  * 2. Cryptographic JWT Authentication: Requests signed Bearer tokens from /api/v1/auth/login and
  *    attaches Authorization headers across all protected endpoints.
  * 3. Multi-Tenant RBAC Integration: Evaluates active persona boundaries across infrastructure actions.
- * 4. Rich Bare-Metal Telemetry & Real-Time SVG Graphs:
- *    - CPU usage area graph with load averages and IO wait percentage.
- *    - Memory & Swap dual utilization charts.
- *    - Storage tier breakdowns (SSD rootfs vs. HDD secondary pools and physical disk SMART health).
- *    - Live Inbound (RX) vs. Outbound (TX) network bandwidth throughput graph.
- *    - System uptime and boot telemetry indicators.
+ * 4. Rich Bare-Metal Telemetry & Real-Time SVG Graphs.
  * 5. Notion Two-Way Sync: Notes (Runbooks) and Future Upgrades & Expansion across separate databases.
+ * 6. Hosted Apps: Launchpad for active server services (Proxmox, Wazuh, Immich, NextCloud, Tailscale).
  */
 
 import React, { useState, useEffect, useMemo } from "react";
@@ -53,6 +49,9 @@ import {
   Disc,
   Layers,
   ShieldCheck,
+  Cloud,
+  Image as ImageIcon,
+  Network,
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
 
@@ -265,7 +264,6 @@ function TelemetryAreaChart({
   const height = 170;
   const padding = 20;
 
-  // Lock the X-axis to a maximum of 30 points so it fills left-to-right
   const maxDataPoints = 30;
   const step = (width - 2 * padding) / Math.max(maxDataPoints - 1, 1);
 
@@ -273,7 +271,6 @@ function TelemetryAreaChart({
     const rawVal = Number(d[dataKey]) || 0;
     const clampedVal = Math.min(Math.max(rawVal, 0), maxValue);
 
-    // Start from the left edge and progress to the right
     const x = padding + index * step;
     const y =
       height - padding - (clampedVal / maxValue) * (height - 2 * padding);
@@ -300,7 +297,6 @@ function TelemetryAreaChart({
           </linearGradient>
         </defs>
 
-        {/* Grid lines */}
         {[0, 0.25, 0.5, 0.75, 1].map((p, idx) => {
           const y = height - padding - p * (height - 2 * padding);
           return (
@@ -317,7 +313,6 @@ function TelemetryAreaChart({
           );
         })}
 
-        {/* Area and Line Path */}
         <path
           d={areaD}
           fill={`url(#${gradientId})`}
@@ -332,7 +327,6 @@ function TelemetryAreaChart({
           className="transition-all duration-500 ease-linear"
         />
 
-        {/* Invisible hit-boxes for Hover Tooltips */}
         {points.map((pt, i) => (
           <rect
             key={`hit-${i}`}
@@ -346,10 +340,8 @@ function TelemetryAreaChart({
           />
         ))}
 
-        {/* Interactive Hover Tooltip & Crosshair */}
         {hoveredIdx !== null && points[hoveredIdx] && (
           <g className="pointer-events-none transition-all duration-75">
-            {/* Vertical Guide Line */}
             <line
               x1={points[hoveredIdx].x}
               y1={padding}
@@ -359,7 +351,6 @@ function TelemetryAreaChart({
               strokeDasharray="3 3"
             />
 
-            {/* Tooltip Background (Math.max/min prevents clipping off edges) */}
             <rect
               x={Math.max(0, Math.min(points[hoveredIdx].x - 35, width - 70))}
               y={0}
@@ -370,7 +361,6 @@ function TelemetryAreaChart({
               stroke="#3f3f46"
             />
 
-            {/* Tooltip Text */}
             <text
               x={Math.max(35, Math.min(points[hoveredIdx].x, width - 35))}
               y={13}
@@ -394,7 +384,6 @@ function TelemetryAreaChart({
               {unit}
             </text>
 
-            {/* Point Highlight */}
             <circle
               cx={points[hoveredIdx].x}
               cy={points[hoveredIdx].y}
@@ -406,7 +395,6 @@ function TelemetryAreaChart({
           </g>
         )}
 
-        {/* Real-time head pulse dot (only visible when not hovering on historical points) */}
         {points.length > 0 && hoveredIdx === null && (
           <>
             <circle
@@ -497,7 +485,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
           </linearGradient>
         </defs>
 
-        {/* Horizontal grid guide */}
         {[0, 0.5, 1].map((p, idx) => {
           const y = height - padding - p * (height - 2 * padding);
           return (
@@ -542,7 +529,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
           className="transition-all duration-500 ease-linear"
         />
 
-        {/* Invisible hit-boxes for Hover Tooltips */}
         {rxPoints.map((pt, i) => (
           <rect
             key={`hit-${i}`}
@@ -556,7 +542,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
           />
         ))}
 
-        {/* Interactive Hover Tooltip & Crosshairs */}
         {hoveredIdx !== null &&
           rxPoints[hoveredIdx] &&
           txPoints[hoveredIdx] && (
@@ -729,7 +714,6 @@ export default function App() {
     },
   ]);
 
-  // Notes Runbook Vault State
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [selectedTag, setSelectedTag] = useState<string>("All");
   const [isNotesLoading, setIsNotesLoading] = useState<boolean>(false);
@@ -744,7 +728,6 @@ export default function App() {
   );
   const [isSubmittingNote, setIsSubmittingNote] = useState<boolean>(false);
 
-  // Upgrades State
   const [upgrades, setUpgrades] = useState<UpgradeItem[]>([]);
   const [isUpgradesLoading, setIsUpgradesLoading] = useState<boolean>(false);
   const [isCreatingUpgrade, setIsCreatingUpgrade] = useState<boolean>(false);
@@ -771,12 +754,47 @@ export default function App() {
     },
   ]);
 
+  // Integrated Server Applications
   const [apps] = useState([
+    {
+      name: "Proxmox VE",
+      category: "Hypervisor",
+      status: "Active",
+      desc: "Bare-metal virtualization management and container orchestration.",
+      url: "https://pve-server.exocomet-gamut.ts.net:8006/#v1:0:18:4:::::::2",
+      icon: Server,
+    },
     {
       name: "Wazuh SIEM",
       category: "Security & Compliance",
-      status: "Installed",
-      desc: "Real-time host intrusion detection and PCI-DSS sovereign log compliance.",
+      status: "Active",
+      desc: "Real-time host intrusion detection and sovereign log compliance.",
+      url: "https://100.116.163.29:8443/app/wz-home#/overview/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-24h,to:now))&_a=(filters:!(),query:(language:kuery,query:''))",
+      icon: ShieldCheck,
+    },
+    {
+      name: "NextCloud",
+      category: "Cloud Storage",
+      status: "Active",
+      desc: "Self-hosted productivity platform and file synchronization.",
+      url: "https://ryan-ubuntu-home-server.exocomet-gamut.ts.net/index.php/apps/dashboard/",
+      icon: Cloud,
+    },
+    {
+      name: "Immich",
+      category: "Media Management",
+      status: "Active",
+      desc: "High-performance self-hosted photo and video backup solution.",
+      url: "http://immich-server.exocomet-gamut.ts.net",
+      icon: ImageIcon,
+    },
+    {
+      name: "Tailscale",
+      category: "SDN / Zero-Trust",
+      status: "Active",
+      desc: "WireGuard-based mesh networking console and machine routing.",
+      url: "https://console.tailscale.com/admin/machines?refreshed=true",
+      icon: Network,
     },
   ]);
 
@@ -1571,7 +1589,7 @@ export default function App() {
                       </span>
                     </div>
                     <p className="text-xs text-zinc-500 font-mono mb-4">
-                      {telemetry?.cpu.cores} Logical Cores (
+                      {telemetry?.cpu.cores} Physical Cores (
                       {telemetry?.cpu.sockets} Socket) • IO Wait:{" "}
                       {telemetry?.cpu.iowait_pct || 0}%
                     </p>
@@ -2484,49 +2502,60 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-sm font-bold text-white">
-                    Sovereign Cloud Marketplace & Extensions
+                    Sovereign Cloud Applications
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Integrated security telemetry pipelines and cloud add-ons
+                    Integrated security telemetry pipelines and cloud
+                    applications
                   </p>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {apps.map((app, idx) => (
-                  <div
-                    key={idx}
-                    className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-[10px] font-mono text-zinc-500 uppercase font-semibold">
-                          {app.category}
-                        </span>
-                        <span
-                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                            app.status === "Active"
-                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                              : "bg-zinc-800 text-zinc-400"
-                          }`}
-                        >
-                          {app.status}
-                        </span>
+                {apps.map((app, idx) => {
+                  const AppIcon = app.icon;
+                  return (
+                    <div
+                      key={idx}
+                      className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between hover:border-emerald-500/50 transition-colors group"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-[10px] font-mono text-zinc-500 uppercase font-semibold flex items-center gap-1.5">
+                            <AppIcon className="w-3.5 h-3.5 text-zinc-400 group-hover:text-emerald-400 transition-colors" />
+                            {app.category}
+                          </span>
+                          <span
+                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                              app.status === "Active"
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                : "bg-zinc-800 text-zinc-400"
+                            }`}
+                          >
+                            {app.status}
+                          </span>
+                        </div>
+                        <h3 className="text-sm font-bold text-white mb-2">
+                          {app.name}
+                        </h3>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                          {app.desc}
+                        </p>
                       </div>
-                      <h3 className="text-sm font-bold text-white mb-2">
-                        {app.name}
-                      </h3>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        {app.desc}
-                      </p>
+                      <div className="mt-6 pt-4 border-t border-zinc-800 flex justify-end">
+                        <a
+                          href={app.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-indigo-400 hover:text-indigo-300 hover:underline flex items-center gap-1"
+                        >
+                          Launch Application{" "}
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
                     </div>
-                    <div className="mt-6 pt-4 border-t border-zinc-800 flex justify-end">
-                      <button className="text-xs text-indigo-400 hover:underline flex items-center gap-1">
-                        Manage Integration <ExternalLink className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

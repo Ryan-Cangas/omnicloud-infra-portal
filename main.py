@@ -116,7 +116,7 @@ USERS_DB = {
         "password_hash": DEFAULT_DEV_HASH,
         "role": "SuperAdmin",
         "tenant_id": "global",
-        "name": "Cloud Operator",
+        "name": "Ryan Cangas",
     },
     "tenant-alex": {
         "user_id": "tenant-alex",
@@ -124,7 +124,7 @@ USERS_DB = {
         "password_hash": DEFAULT_DEV_HASH,
         "role": "TenantAdmin",
         "tenant_id": "tenant-alpha",
-        "name": "Alex Rivera",
+        "name": "Tenant Admin",
     },
     "viewer-sam": {
         "user_id": "viewer-sam",
@@ -132,7 +132,7 @@ USERS_DB = {
         "password_hash": DEFAULT_DEV_HASH,
         "role": "TenantViewer",
         "tenant_id": "tenant-alpha",
-        "name": "Sam Taylor",
+        "name": "Tenant Viewer",
     },
     "finance-claire": {
         "user_id": "finance-claire",
@@ -140,7 +140,7 @@ USERS_DB = {
         "password_hash": DEFAULT_DEV_HASH,
         "role": "BillingManager",
         "tenant_id": "tenant-alpha",
-        "name": "Claire Dupont",
+        "name": "Finance Manager",
     },
 }
 

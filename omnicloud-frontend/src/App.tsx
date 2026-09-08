@@ -7,7 +7,8 @@
  * 2. Cryptographic JWT Authentication: Requests signed Bearer tokens from /api/v1/auth/login and
  *    attaches Authorization headers across all protected endpoints.
  * 3. Multi-Tenant RBAC Integration: Evaluates active persona boundaries (SuperAdmin, TenantAdmin,
- *    TenantViewer, BillingManager) across infrastructure actions and financial records.
+ *    TenantViewer, BillingManager) across infrastructure actions and financial records. Strict
+ *    session isolation is enforced.
  * 4. Functional Modules Scaffolding:
  *    - Tasks: Filterable, interactive status toggle (Pending -> In Progress -> Completed).
  *    - Calendar: Maintenance windows, scheduled audit slots, and hypervisor kernel patch timelines.
@@ -368,7 +369,8 @@ export default function App() {
   };
 
   /**
-   * Validates active session on mount or automatically authenticates the initial SuperAdmin persona.
+   * Validates active session on mount. Does NOT auto-login as admin to enforce
+   * an explicit authentication handshake for security.
    */
   useEffect(() => {
     if (authToken) {
@@ -385,8 +387,6 @@ export default function App() {
           setAuthToken(null);
           setCurrentUser(null);
         });
-    } else {
-      switchPersonaAuth("admin-01");
     }
   }, []);
 
@@ -640,8 +640,9 @@ export default function App() {
               {PERSONA_ACCOUNTS.map((p) => (
                 <button
                   key={p.userId}
+                  type="button"
                   onClick={() => switchPersonaAuth(p.userId)}
-                  className="px-2.5 py-1.5 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 rounded-lg text-[10px] text-zinc-300 truncate text-left"
+                  className="px-2.5 py-1.5 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 rounded-lg text-[10px] text-zinc-300 truncate text-left transition-colors"
                 >
                   {p.role}
                 </button>
@@ -667,37 +668,32 @@ export default function App() {
       {/* Sidebar Navigation */}
       <aside className="w-64 bg-[#121214] border-r border-zinc-800/80 flex flex-col justify-between shrink-0">
         <div className="p-4 flex flex-col h-full">
-          {/* JWT Authenticated Persona Switcher */}
+          {/* Authenticated Persona Read-Only Display */}
           <div className="p-3 bg-[#18181b] border border-zinc-800 rounded-xl mb-6 shadow-sm">
             <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-2 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
-                <UserCheck className="w-3.5 h-3.5 text-emerald-400" />{" "}
-                Authenticated Persona
+                <UserCheck className="w-3.5 h-3.5 text-emerald-400" /> Active
+                Session
               </span>
               <span className="px-1.5 py-0.2 bg-emerald-500/10 text-emerald-400 text-[9px] font-mono rounded">
                 JWT Valid
               </span>
             </div>
-            <select
-              value={currentUser.userId}
-              onChange={(e) => switchPersonaAuth(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-lg p-2 focus:outline-none focus:border-emerald-500"
-            >
-              {PERSONA_ACCOUNTS.map((p) => (
-                <option key={p.userId} value={p.userId}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <div className="mt-2 text-[10px] font-mono text-zinc-400 flex justify-between">
-              <span>
-                Role:{" "}
+
+            {/* Replaced <select> with a static div to enforce session isolation */}
+            <div className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white font-medium rounded-lg p-2">
+              {currentUser.name}
+            </div>
+
+            <div className="mt-2 text-[10px] font-mono text-zinc-400 flex flex-col gap-1">
+              <div className="flex justify-between">
+                <span>Role:</span>
                 <strong className="text-emerald-400">{currentUser.role}</strong>
-              </span>
-              <span>
-                Tenant:{" "}
+              </div>
+              <div className="flex justify-between">
+                <span>Tenant:</span>
                 <strong className="text-sky-400">{currentUser.tenantId}</strong>
-              </span>
+              </div>
             </div>
           </div>
 
@@ -729,7 +725,7 @@ export default function App() {
 
           <button
             onClick={handleLogout}
-            className="mt-4 w-full flex items-center justify-center gap-2 px-3 py-2 bg-zinc-900 hover:bg-rose-500/10 hover:text-rose-400 border border-zinc-800 rounded-xl text-xs text-zinc-400 transition-colors"
+            className="mt-4 w-full flex items-center justify-center gap-2 px-3 py-2 bg-zinc-900 hover:bg-rose-500/10 hover:text-rose-400 border border-zinc-800 rounded-xl text-xs font-medium text-zinc-400 transition-colors"
           >
             <LogOut className="w-3.5 h-3.5" /> Sign Out
           </button>

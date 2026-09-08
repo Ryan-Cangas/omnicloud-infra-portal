@@ -1,15 +1,15 @@
 """
-Sovereign Cloud Management Platform (CMP) Control Plane & Hypervisor Gateway.
+OmniOps Homelab Control Plane & Hypervisor Gateway.
 
 Architecture & Responsibilities:
-1. Cryptographic Authentication & RBAC (JWT): Issues signed HS256 access tokens containing user_id,
-   role, and tenant_id claims.
-2. Proxmox Hypervisor Communication: Supports Proxmox API Tokens and standard PAM/PVE authentication via proxmoxer.
-3. Node & Workload Isolation: Enforces VM and container isolation boundaries across users and roles.
+1. Cryptographic Authentication & RBAC (JWT): Issues signed HS256 access tokens.
+2. Proxmox Hypervisor Communication: Supports Proxmox API Tokens and PAM/PVE authentication.
+3. Strict Role Isolation: Two personas (SuperAdmin and Guest). Guests have strictly read-only access.
 4. Ephemeral Single-Use WebSocket Tokens: Issues 30-second scoped console tokens for out-of-band noVNC access.
-5. Bidirectional RFB WebSocket Reverse Proxy: Bridges client RFB frame streams to Proxmox's internal vncwebsocket daemon.
-6. Bare-Metal Telemetry & Time-Series: Metrics engine for CPU, RAM, NVMe/SSD rootfs, HDD pools, network RX/TX, and uptime.
-7. Notion Two-Way Sync: Native synchronization for Homelab Runbooks and Future Hardware/Software Expansions.
+5. Bidirectional RFB WebSocket Reverse Proxy: Bridges client RFB streams to Proxmox's internal vncwebsocket daemon.
+6. Bare-Metal Telemetry & Time-Series: Metrics engine for CPU, RAM, NVMe/HDD, network RX/TX, and uptime.
+7. Notion Two-Way Sync: Native synchronization for Homelab Runbooks and Hardware Expansions.
+8. MFA Integration: Enforces TOTP (Microsoft Authenticator) for SuperAdmin logins.
 """
 
 import os
@@ -29,6 +29,7 @@ import bcrypt
 import requests
 import urllib3
 import websockets
+import pyotp  # Added for Microsoft Authenticator MFA
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -47,7 +48,7 @@ PROXMOX_PASSWORD = os.getenv("PROXMOX_PASSWORD", "")
 PROXMOX_TOKEN_NAME = os.getenv("PROXMOX_TOKEN_NAME", "")
 PROXMOX_TOKEN_VALUE = os.getenv("PROXMOX_TOKEN_VALUE", "")
 
-JWT_SECRET = os.getenv("JWT_SECRET_KEY", "sovereign-cloud-cmp-secret-key-production-hardened-2026")
+JWT_SECRET = os.getenv("JWT_SECRET_KEY", "omniops-homelab-secret-key-production")
 JWT_ALGORITHM = "HS256"
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 120
 JWT_CONSOLE_TOKEN_EXPIRE_SECONDS = 30
@@ -57,16 +58,18 @@ NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "")
 NOTION_UPGRADES_DATABASE_ID = os.getenv("NOTION_UPGRADES_DATABASE_ID", "")
 NOTION_VERSION = "2022-06-28"
 
-# Sliding window buffer to maintain graph telemetry points (up to 30 intervals)
-TELEMETRY_STREAM_BUFFER = deque(maxlen=30)
+# MFA Configuration
+ADMIN_MFA_SECRET = os.getenv("ADMIN_MFA_SECRET")
+if not ADMIN_MFA_SECRET:
+    raise RuntimeError("CRITICAL: ADMIN_MFA_SECRET environment variable is missing.")
 
-# Global snapshot state to calculate instantaneous network throughput
+TELEMETRY_STREAM_BUFFER = deque(maxlen=30)
 LAST_NETWORK_SNAPSHOT = {"time": 0.0, "netin": 0, "netout": 0}
 
 app = FastAPI(
-    title="OmniOps Homelab Control Plane & Hypervisor Gateway",
+    title="OmniOps Homelab Control Plane",
     description="Sovereign homelab management control plane with isolated hypervisor proxies.",
-    version="2.0.0"
+    version="2.2.0"
 )
 
 app.add_middleware(
@@ -93,11 +96,6 @@ else:
         verify_ssl=False
     )
 
-TENANT_VM_MAP = {
-    "tenant-alpha": [100, 101, 102],
-    "tenant-fintech": [103, 104, 105],
-}
-
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
@@ -106,51 +104,34 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 DEFAULT_DEV_HASH = hash_password("password123")
 
+# Simplified Homelab Personas
 USERS_DB = {
     "admin-01": {
         "user_id": "admin-01",
         "username": "admin-01",
         "password_hash": DEFAULT_DEV_HASH,
         "role": "SuperAdmin",
-        "tenant_id": "global",
         "name": "Ryan Cangas",
     },
-    "tenant-alex": {
-        "user_id": "tenant-alex",
-        "username": "tenant-alex",
+    "guest": {
+        "user_id": "guest",
+        "username": "guest",
         "password_hash": DEFAULT_DEV_HASH,
-        "role": "TenantAdmin",
-        "tenant_id": "tenant-alpha",
-        "name": "Tenant Admin",
-    },
-    "viewer-sam": {
-        "user_id": "viewer-sam",
-        "username": "viewer-sam",
-        "password_hash": DEFAULT_DEV_HASH,
-        "role": "TenantViewer",
-        "tenant_id": "tenant-alpha",
-        "name": "Tenant Viewer",
-    },
-    "operator-ops": {
-        "user_id": "operator-ops",
-        "username": "operator-ops",
-        "password_hash": DEFAULT_DEV_HASH,
-        "role": "Operator",
-        "tenant_id": "tenant-alpha",
-        "name": "Infra Operator",
-    },
+        "role": "Guest",
+        "name": "Portfolio Guest",
+    }
 }
 
 class UserContext:
-    def __init__(self, user_id: str, role: str, tenant_id: str, name: Optional[str] = None):
+    def __init__(self, user_id: str, role: str, name: Optional[str] = None):
         self.user_id = user_id
         self.role = role
-        self.tenant_id = tenant_id
         self.name = name
 
 class LoginRequest(BaseModel):
     username: str
     password: str
+    mfa_code: Optional[str] = None
 
 class ConsoleTokenRequest(BaseModel):
     node: str
@@ -186,30 +167,26 @@ def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depen
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("sub")
         role = payload.get("role")
-        tenant_id = payload.get("tenant_id")
         token_type = payload.get("type", "access")
 
-        if not user_id or not role or not tenant_id:
+        if not user_id or not role:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload structure.")
         if token_type != "access":
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type.")
 
-        return UserContext(user_id=user_id, role=role, tenant_id=tenant_id, name=payload.get("name"))
+        return UserContext(user_id=user_id, role=role, name=payload.get("name"))
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired. Please re-authenticate.")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid cryptographic token.")
 
 def enforce_vm_access(vmid: int, user: UserContext, required_action: str = "view"):
-    if user.role == "SuperAdmin":
-        return
-
-    allowed_vmids = TENANT_VM_MAP.get(user.tenant_id, [])
-    if vmid not in allowed_vmids:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Access Denied: Workload {vmid} is outside partition '{user.tenant_id}'.")
-
-    if required_action in ["power", "console"] and user.role == "TenantViewer":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Forbidden: Role '{user.role}' lacks '{required_action}' privileges.")
+    # Guests are strictly prohibited from mutating state or accessing the console
+    if required_action in ["power", "console"] and user.role != "SuperAdmin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail=f"Forbidden: Your '{user.role}' role has strictly view-only access."
+        )
 
 def get_pve_auth_headers_and_cookies():
     if PROXMOX_TOKEN_NAME and PROXMOX_TOKEN_VALUE:
@@ -243,10 +220,6 @@ def format_uptime(seconds: int) -> str:
     return " ".join(parts) or "< 1m"
 
 def get_live_network_throughput(proxmox_client):
-    """
-    Computes real-time bandwidth delta (B/s -> KB/s) by summing cumulative bytes
-    across all active workloads. Avoids RRD averaging.
-    """
     global LAST_NETWORK_SNAPSHOT
     now = time.time()
     total_rx = 0
@@ -285,11 +258,20 @@ def login(req: LoginRequest):
     if not user_record or not verify_password(req.password, user_record["password_hash"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password.")
 
+    # Enforce MFA for SuperAdmin
+    if user_record["role"] == "SuperAdmin":
+        if not req.mfa_code:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Microsoft Authenticator code required.")
+        
+        totp = pyotp.TOTP(ADMIN_MFA_SECRET)
+        # valid_window=1 allows a 30-second tolerance for minor clock drift
+        if not totp.verify(req.mfa_code, valid_window=1):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Authenticator code. Please try again.")
+
     access_token = create_jwt_token(
         payload_data={
             "sub": user_record["user_id"],
             "role": user_record["role"],
-            "tenant_id": user_record["tenant_id"],
             "name": user_record["name"],
             "type": "access",
         },
@@ -301,10 +283,7 @@ def login(req: LoginRequest):
         "token_type": "bearer",
         "user": {
             "userId": user_record["user_id"],
-            "user_id": user_record["user_id"],
             "role": user_record["role"],
-            "tenantId": user_record["tenant_id"],
-            "tenant_id": user_record["tenant_id"],
             "name": user_record["name"],
         }
     }
@@ -313,10 +292,7 @@ def login(req: LoginRequest):
 def get_me(user: UserContext = Depends(get_current_user)):
     return {
         "userId": user.user_id,
-        "user_id": user.user_id,
         "role": user.role,
-        "tenantId": user.tenant_id,
-        "tenant_id": user.tenant_id,
         "name": user.name
     }
 
@@ -327,7 +303,6 @@ def issue_ephemeral_console_token(req: ConsoleTokenRequest, user: UserContext = 
         payload_data={
             "sub": user.user_id,
             "role": user.role,
-            "tenant_id": user.tenant_id,
             "vmid": req.vmid,
             "node": req.node,
             "vm_type": req.vm_type,
@@ -345,21 +320,15 @@ def issue_ephemeral_console_token(req: ConsoleTokenRequest, user: UserContext = 
 def get_cluster_inventory(user: UserContext = Depends(get_current_user)):
     try:
         resources = proxmox.cluster.resources.get(type="vm")
-        allowed_vmids = TENANT_VM_MAP.get(user.tenant_id, [])
-
         filtered = []
         for item in resources:
-            vmid = item.get("vmid")
-            if user.role != "SuperAdmin" and vmid not in allowed_vmids:
-                continue
-
             maxmem_gb = round(item.get("maxmem", 0) / (1024**3), 2)
             mem_pct = round(min(max((item.get("mem", 0) / max(item.get("maxmem", 1), 1)) * 100, 0.0), 100.0), 2)
             cpu_pct = round(min(max(item.get("cpu", 0) * 100, 0.0), 100.0), 2)
 
             filtered.append({
-                "vmid": vmid,
-                "name": item.get("name", f"guest-{vmid}"),
+                "vmid": item.get("vmid"),
+                "name": item.get("name", f"guest-{item.get('vmid')}"),
                 "node": item.get("node"),
                 "type": item.get("type"),
                 "status": item.get("status"),
@@ -379,7 +348,7 @@ def control_vm_power(node: str, vm_type: str, vmid: int, action: str, user: User
         node_controller = getattr(proxmox.nodes(node), vm_type)(vmid)
         status_controller = getattr(node_controller.status, action)
         upid = status_controller.post()
-        return {"status": "success", "action": action, "upid": upid, "actor": user.user_id, "tenant": user.tenant_id}
+        return {"status": "success", "action": action, "upid": upid, "actor": user.user_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Power control failed: {str(e)}")
 
@@ -408,9 +377,6 @@ def generate_vnc_proxy_ticket(node: str, vm_type: str, vmid: int, user: UserCont
 
 @app.get("/api/v1/nodes/telemetry")
 def get_node_telemetry(user: UserContext = Depends(get_current_user)):
-    if user.role != "SuperAdmin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Host telemetry access restricted to SuperAdmin.")
-
     try:
         nodes = proxmox.nodes.get()
         if not nodes:
@@ -718,6 +684,9 @@ def get_notion_notes(user: UserContext = Depends(get_current_user)):
 
 @app.post("/api/v1/notes")
 def create_notion_note(req: CreateNoteRequest, user: UserContext = Depends(get_current_user)):
+    if user.role != "SuperAdmin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Guests cannot mutate Notion databases.")
+
     if not NOTION_API_KEY or not NOTION_DATABASE_ID:
         raise HTTPException(status_code=500, detail="Notion credentials unconfigured in .env.")
 
@@ -808,6 +777,9 @@ def get_notion_upgrades(user: UserContext = Depends(get_current_user)):
 
 @app.post("/api/v1/upgrades")
 def create_notion_upgrade(req: CreateUpgradeRequest, user: UserContext = Depends(get_current_user)):
+    if user.role != "SuperAdmin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Guests cannot mutate Notion databases.")
+
     if not NOTION_API_KEY or not NOTION_UPGRADES_DATABASE_ID:
         raise HTTPException(status_code=500, detail="Notion Upgrades DB unconfigured in .env.")
 

@@ -51,46 +51,13 @@ import {
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
 
-type Role = "SuperAdmin" | "TenantAdmin" | "TenantViewer" | "Operator";
+type Role = "SuperAdmin" | "Guest";
 
 interface PersonaProfile {
   userId: string;
   role: Role;
-  tenantId: string;
   name: string;
-  defaultPassword?: string;
 }
-
-const PERSONA_ACCOUNTS: PersonaProfile[] = [
-  {
-    userId: "admin-01",
-    role: "SuperAdmin",
-    tenantId: "global",
-    name: "Ryan Cangas (SuperAdmin)",
-    defaultPassword: "password123",
-  },
-  {
-    userId: "tenant-alex",
-    role: "TenantAdmin",
-    tenantId: "tenant-alpha",
-    name: "Alpha Workloads (Admin)",
-    defaultPassword: "password123",
-  },
-  {
-    userId: "viewer-sam",
-    role: "TenantViewer",
-    tenantId: "tenant-alpha",
-    name: "Homelab Guest (Viewer)",
-    defaultPassword: "password123",
-  },
-  {
-    userId: "operator-ops",
-    role: "Operator",
-    tenantId: "tenant-alpha",
-    name: "Infrastructure Operator",
-    defaultPassword: "password123",
-  },
-];
 
 interface GuestResource {
   vmid: number;
@@ -250,7 +217,6 @@ interface SecurityAuditLog {
 // ---------------------------------------------------------------------------
 
 function formatSpeed(kbps: number) {
-  // Convert KB/s (Kilobytes/sec) to Mbps (Megabits/sec)
   const mbps = (kbps * 8) / 1000;
   if (mbps >= 1000) return `${(mbps / 1000).toFixed(2)} Gbps`;
   if (mbps >= 1) return `${mbps.toFixed(1)} Mbps`;
@@ -677,8 +643,9 @@ export default function App() {
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string>("");
 
-  const [loginUsername, setLoginUsername] = useState("admin-01");
-  const [loginPassword, setLoginPassword] = useState("password123");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginMfa, setLoginMfa] = useState(""); // MFA field for SuperAdmin
 
   const [resources, setResources] = useState<GuestResource[]>([]);
   const [telemetry, setTelemetry] = useState<NodeTelemetry | null>(null);
@@ -934,7 +901,11 @@ export default function App() {
     },
   ]);
 
-  const handleAuthenticate = async (username: string, password: string) => {
+  const handleAuthenticate = async (
+    username: string,
+    password: string,
+    mfaCode?: string,
+  ) => {
     setIsAuthenticating(true);
     setLoginError("");
     try {
@@ -944,6 +915,7 @@ export default function App() {
         body: JSON.stringify({
           username: username.trim(),
           password: password.trim(),
+          mfa_code: mfaCode,
         }),
       });
 
@@ -965,15 +937,6 @@ export default function App() {
     } finally {
       setIsAuthenticating(false);
     }
-  };
-
-  const switchPersonaAuth = async (targetUserId: string) => {
-    const persona = PERSONA_ACCOUNTS.find((p) => p.userId === targetUserId);
-    if (!persona) return;
-    await handleAuthenticate(
-      persona.userId,
-      persona.defaultPassword || "password123",
-    );
   };
 
   useEffect(() => {
@@ -1017,10 +980,7 @@ export default function App() {
   };
 
   const fetchTelemetry = async () => {
-    if (!authToken || currentUser?.role !== "SuperAdmin") {
-      setTelemetry(null);
-      return;
-    }
+    if (!authToken) return;
     try {
       const res = await fetch("http://localhost:8000/api/v1/nodes/telemetry", {
         headers: getAuthHeaders(),
@@ -1180,17 +1140,20 @@ export default function App() {
     );
   };
 
-  const canControlPower =
-    currentUser?.role === "SuperAdmin" || currentUser?.role === "TenantAdmin";
-  const canAccessConsole =
-    currentUser?.role === "SuperAdmin" || currentUser?.role === "TenantAdmin";
-  const canViewHostTelemetry = currentUser?.role === "SuperAdmin";
+  const formatIp = (ip: string) => {
+    if (currentUser?.role === "SuperAdmin") return ip;
+    if (ip === "Localhost") return ip;
+    const parts = ip.split(".");
+    if (parts.length === 4) return `${parts[0]}.${parts[1]}.***.***`;
+    return "***.***.***.***";
+  };
+
+  const canControlPower = currentUser?.role === "SuperAdmin";
+  const canAccessConsole = currentUser?.role === "SuperAdmin";
 
   const navItems = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
-    ...(canViewHostTelemetry
-      ? [{ id: "analytics", label: "Host Telemetry", icon: BarChart3 }]
-      : []),
+    { id: "analytics", label: "Host Telemetry", icon: BarChart3 },
     { id: "workspaces", label: "Partitions & SDN", icon: Boxes },
     { id: "services", label: "Service Catalog", icon: Globe },
     { id: "security", label: "Security & SIEM", icon: ShieldCheck },
@@ -1210,11 +1173,9 @@ export default function App() {
               <KeyRound className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white">
-                OmniOps Homelab Authentication
-              </h2>
+              <h2 className="text-lg font-bold text-white">OmniOps Homelab</h2>
               <p className="text-xs text-zinc-400">
-                Sovereign Control Plane Token Gateway
+                Sovereign Control Plane Gateway
               </p>
             </div>
           </div>
@@ -1228,7 +1189,7 @@ export default function App() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              handleAuthenticate(loginUsername, loginPassword);
+              handleAuthenticate(loginUsername, loginPassword, loginMfa);
             }}
             className="space-y-4"
           >
@@ -1258,6 +1219,21 @@ export default function App() {
                 required
               />
             </div>
+            <div>
+              <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                Authenticator Code{" "}
+                <span className="text-[10px] text-zinc-500 font-normal lowercase">
+                  (Admin Only)
+                </span>
+              </label>
+              <input
+                type="text"
+                value={loginMfa}
+                onChange={(e) => setLoginMfa(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-3 focus:outline-none focus:border-emerald-500"
+                placeholder="123456"
+              />
+            </div>
             <button
               type="submit"
               disabled={isAuthenticating}
@@ -1265,26 +1241,19 @@ export default function App() {
             >
               {isAuthenticating
                 ? "Verifying Token Claims..."
-                : "Authorize Control Plane"}
+                : "Authorize SuperAdmin"}
             </button>
           </form>
 
           <div className="mt-6 pt-6 border-t border-zinc-800">
-            <span className="block text-[11px] text-zinc-500 mb-2 font-mono">
-              Quick Authenticate Persona:
-            </span>
-            <div className="grid grid-cols-2 gap-2">
-              {PERSONA_ACCOUNTS.map((p) => (
-                <button
-                  key={p.userId}
-                  type="button"
-                  onClick={() => switchPersonaAuth(p.userId)}
-                  className="px-2.5 py-1.5 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 rounded-lg text-[10px] text-zinc-300 truncate text-left transition-colors"
-                >
-                  {p.role}
-                </button>
-              ))}
-            </div>
+            <button
+              type="button"
+              onClick={() => handleAuthenticate("guest", "password123")}
+              className="w-full py-4 bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/20 text-indigo-400 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2"
+            >
+              <Globe className="w-4 h-4" /> Visiting Ryan's Home Server? Click
+              Here
+            </button>
           </div>
         </div>
       </div>
@@ -1303,8 +1272,7 @@ export default function App() {
           <div className="p-3 bg-[#18181b] border border-zinc-800 rounded-xl mb-6 shadow-sm">
             <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-2 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
-                <UserCheck className="w-3.5 h-3.5 text-emerald-400" /> Operator
-                Active
+                <UserCheck className="w-3.5 h-3.5 text-emerald-400" /> Session
               </span>
               <span className="px-1.5 py-0.2 bg-emerald-500/10 text-emerald-400 text-[9px] font-mono rounded">
                 JWT Valid
@@ -1319,8 +1287,10 @@ export default function App() {
                 <strong className="text-emerald-400">{currentUser.role}</strong>
               </div>
               <div className="flex justify-between">
-                <span>Scope:</span>
-                <strong className="text-sky-400">{currentUser.tenantId}</strong>
+                <span>Access:</span>
+                <strong className="text-sky-400">
+                  {currentUser.role === "Guest" ? "Read-Only" : "Full Control"}
+                </strong>
               </div>
             </div>
           </div>
@@ -1460,9 +1430,7 @@ export default function App() {
                       Machines & Containers
                     </h2>
                     <p className="text-[11px] text-zinc-400">
-                      {currentUser.role === "SuperAdmin"
-                        ? "Global Hypervisor Inventory (pve-server)"
-                        : `Scope: Partition (${currentUser.tenantId})`}
+                      Global Hypervisor Inventory (pve-server)
                     </p>
                   </div>
                   <button
@@ -1582,6 +1550,7 @@ export default function App() {
                               <button
                                 disabled
                                 className="p-1.5 bg-zinc-800/40 text-zinc-600 rounded-lg border border-zinc-800"
+                                title="Power controls restricted to Admins"
                               >
                                 <Lock className="w-3.5 h-3.5" />
                               </button>
@@ -1597,7 +1566,7 @@ export default function App() {
           )}
 
           {/* ================= TELEMETRY ANALYTICS WITH GRAPHS ================= */}
-          {activeTab === "analytics" && canViewHostTelemetry && (
+          {activeTab === "analytics" && (
             <div className="space-y-6">
               <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div>
@@ -2042,7 +2011,7 @@ export default function App() {
                           {log.event}
                         </td>
                         <td className="px-6 py-4 text-zinc-400">
-                          {log.ip_address}
+                          {formatIp(log.ip_address)}
                         </td>
                         <td className="px-6 py-4 text-right text-zinc-500">
                           {log.timestamp}
@@ -2083,16 +2052,18 @@ export default function App() {
                     />
                   </button>
 
-                  <button
-                    onClick={() => setIsCreatingUpgrade(true)}
-                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 shadow-sm"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Propose Upgrade
-                  </button>
+                  {currentUser.role === "SuperAdmin" && (
+                    <button
+                      onClick={() => setIsCreatingUpgrade(true)}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 shadow-sm"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Propose Upgrade
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {isCreatingUpgrade && (
+              {isCreatingUpgrade && currentUser.role === "SuperAdmin" && (
                 <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
                     Submit Hardware/Software Expansion Requirement
@@ -2220,14 +2191,23 @@ export default function App() {
                       </div>
                       <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-500 font-mono">
                         <span>By: {upg.requested_by}</span>
-                        <a
-                          href={`https://notion.so/${upg.id.replace(/-/g, "")}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-indigo-400 hover:underline flex items-center gap-1"
-                        >
-                          View in Notion <ExternalLink className="w-3 h-3" />
-                        </a>
+                        {currentUser.role === "SuperAdmin" ? (
+                          <a
+                            href={`https://notion.so/${upg.id.replace(/-/g, "")}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-indigo-400 hover:underline flex items-center gap-1"
+                          >
+                            View in Notion <ExternalLink className="w-3 h-3" />
+                          </a>
+                        ) : (
+                          <span
+                            className="text-zinc-600 flex items-center gap-1 cursor-not-allowed"
+                            title="External links disabled for guests"
+                          >
+                            Notion Link <Lock className="w-3 h-3" />
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -2295,16 +2275,20 @@ export default function App() {
                         </td>
                         <td className="px-6 py-4 text-right">
                           <button
-                            onClick={() => toggleMaintenanceStatus(task.id)}
+                            onClick={() => {
+                              if (currentUser.role === "SuperAdmin")
+                                toggleMaintenanceStatus(task.id);
+                            }}
                             className={`px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-all ${
                               task.status === "Completed"
-                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                                 : task.status === "In Progress"
-                                  ? "bg-sky-500/10 text-sky-400 border-sky-500/20 hover:bg-sky-500/20"
-                                  : "bg-zinc-800/60 text-zinc-400 border-zinc-700 hover:bg-zinc-800"
-                            }`}
+                                  ? "bg-sky-500/10 text-sky-400 border-sky-500/20"
+                                  : "bg-zinc-800/60 text-zinc-400 border-zinc-700"
+                            } ${currentUser.role === "SuperAdmin" ? "cursor-pointer" : "cursor-default"}`}
                           >
-                            {task.status} ↻
+                            {task.status}{" "}
+                            {currentUser.role === "SuperAdmin" && "↻"}
                           </button>
                         </td>
                       </tr>
@@ -2413,16 +2397,18 @@ export default function App() {
                       className={`w-3.5 h-3.5 ${isNotesLoading ? "animate-spin text-emerald-400" : ""}`}
                     />
                   </button>
-                  <button
-                    onClick={() => setIsCreatingNote(true)}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 shadow-sm"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Push to Notion
-                  </button>
+                  {currentUser.role === "SuperAdmin" && (
+                    <button
+                      onClick={() => setIsCreatingNote(true)}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 shadow-sm"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Push to Notion
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {isCreatingNote && (
+              {isCreatingNote && currentUser.role === "SuperAdmin" && (
                 <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
                     Add New Runbook to Notion Database
@@ -2536,14 +2522,23 @@ export default function App() {
                       </div>
                       <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-500 font-mono">
                         <span>Author: {note.author}</span>
-                        <a
-                          href={`https://notion.so/${note.id.replace(/-/g, "")}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-emerald-400 hover:underline flex items-center gap-1"
-                        >
-                          Open in Notion <ExternalLink className="w-3 h-3" />
-                        </a>
+                        {currentUser.role === "SuperAdmin" ? (
+                          <a
+                            href={`https://notion.so/${note.id.replace(/-/g, "")}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-emerald-400 hover:underline flex items-center gap-1"
+                          >
+                            Open in Notion <ExternalLink className="w-3 h-3" />
+                          </a>
+                        ) : (
+                          <span
+                            className="text-zinc-600 flex items-center gap-1 cursor-not-allowed"
+                            title="External links disabled for guests"
+                          >
+                            Notion Link <Lock className="w-3 h-3" />
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}

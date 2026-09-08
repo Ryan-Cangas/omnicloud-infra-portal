@@ -9,10 +9,12 @@
  * 3. Multi-Tenant RBAC Integration: Evaluates active persona boundaries (SuperAdmin, TenantAdmin,
  *    TenantViewer, BillingManager) across infrastructure actions and financial records. Strict
  *    session isolation is enforced.
- * 4. Functional Modules Scaffolding:
+ * 4. Notion Two-Way Sync: Notes and SOP Runbooks are fetched from and pushed to your Notion database,
+ *    supporting Title, Tag, Snippet, Author, and custom Date properties.
+ * 5. Functional Modules Scaffolding:
  *    - Tasks: Filterable, interactive status toggle (Pending -> In Progress -> Completed).
  *    - Calendar: Maintenance windows, scheduled audit slots, and hypervisor kernel patch timelines.
- *    - Notes: Sovereign runbook repository with interactive tag filtering.
+ *    - Notes: Notion-backed SOP repository with interactive tag filtering (Infrastructure, Security, Update).
  *    - Chats: Support channel switcher with real-time interactive message broadcasting.
  *    - Apps: Sovereign cloud integration marketplace (Wazuh SIEM, OpenObserve, Vault, Prometheus).
  */
@@ -69,7 +71,7 @@ const PERSONA_ACCOUNTS: PersonaProfile[] = [
     userId: "admin-01",
     role: "SuperAdmin",
     tenantId: "global",
-    name: "Cloud Operator (SuperAdmin)",
+    name: "Ryan Cangas (SuperAdmin)",
     defaultPassword: "password123",
   },
   {
@@ -133,6 +135,15 @@ interface CalendarEvent {
   time: string;
   horizon: TimeFilter;
   targetNode: string;
+}
+
+interface NoteItem {
+  id: string;
+  title: string;
+  tag: "Infrastructure" | "Security" | "Update";
+  snippet: string;
+  author: string;
+  updated: string;
 }
 
 export default function App() {
@@ -249,37 +260,22 @@ export default function App() {
     },
   ]);
 
-  // Notes Runbook Vault State
+  // Notion Notes & SOP State
+  const [notes, setNotes] = useState<NoteItem[]>([]);
   const [selectedTag, setSelectedTag] = useState<string>("All");
-  const [notes] = useState([
-    {
-      id: 1,
-      title: "Edge Cluster Provisioning SOP",
-      tag: "Infrastructure",
-      snippet:
-        "Ensure VLAN 104 and VxLAN tunnels are initialized before spinning up worker nodes.",
-      author: "Alex Rivera",
-      updated: "2 days ago",
-    },
-    {
-      id: 2,
-      title: "Quarterly Compute Quotas & Overcommits",
-      tag: "Billing",
-      snippet:
-        "Enterprise tier customers receive 128 vCPUs and 256GB dedicated memory pool defaults.",
-      author: "Claire Dupont",
-      updated: "1 week ago",
-    },
-    {
-      id: 3,
-      title: "Proxmox VE 8.x noVNC Tunnel Hardening",
-      tag: "Security",
-      snippet:
-        "Session cookies forwarded via inspected websocket headers to prevent BaseEventLoop leaks.",
-      author: "Ryan Andre",
-      updated: "Just now",
-    },
-  ]);
+  const [isNotesLoading, setIsNotesLoading] = useState<boolean>(false);
+  const [isCreatingNote, setIsCreatingNote] = useState<boolean>(false);
+
+  // Form state for creating a new Notion SOP
+  const [newTitle, setNewTitle] = useState("");
+  const [newTag, setNewTag] = useState<
+    "Infrastructure" | "Security" | "Update"
+  >("Infrastructure");
+  const [newSnippet, setNewSnippet] = useState("");
+  const [newDate, setNewDate] = useState<string>(
+    new Date().toISOString().split("T")[0],
+  );
+  const [isSubmittingNote, setIsSubmittingNote] = useState<boolean>(false);
 
   // Support Chats State
   const [activeChat, setActiveChat] = useState("tech-support");
@@ -369,8 +365,7 @@ export default function App() {
   };
 
   /**
-   * Validates active session on mount. Does NOT auto-login as admin to enforce
-   * an explicit authentication handshake for security.
+   * Validates active session on mount.
    */
   useEffect(() => {
     if (authToken) {
@@ -436,6 +431,60 @@ export default function App() {
     }
   };
 
+  const fetchNotes = async () => {
+    if (!authToken) return;
+    setIsNotesLoading(true);
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/notes", {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        setNotes(await res.json());
+      }
+    } catch (err) {
+      console.error("Failed to pull notes from Notion:", err);
+    } finally {
+      setIsNotesLoading(false);
+    }
+  };
+
+  const handleCreateNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTitle.trim() || !authToken) return;
+
+    setIsSubmittingNote(true);
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/notes", {
+        method: "POST",
+        headers: {
+          ...getAuthHeaders(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: newTitle.trim(),
+          tag: newTag,
+          snippet: newSnippet.trim(),
+          date: newDate,
+        }),
+      });
+
+      if (res.ok) {
+        setNewTitle("");
+        setNewSnippet("");
+        setNewDate(new Date().toISOString().split("T")[0]);
+        setIsCreatingNote(false);
+        await fetchNotes();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || "Failed to push note to Notion");
+      }
+    } catch (err) {
+      console.error("Failed to create note in Notion:", err);
+    } finally {
+      setIsSubmittingNote(false);
+    }
+  };
+
   useEffect(() => {
     if (authToken && currentUser) {
       fetchResources();
@@ -447,6 +496,12 @@ export default function App() {
       return () => clearInterval(interval);
     }
   }, [authToken, currentUser]);
+
+  useEffect(() => {
+    if (authToken && activeTab === "notes") {
+      fetchNotes();
+    }
+  }, [authToken, activeTab]);
 
   const handlePowerAction = async (
     node: string,
@@ -680,8 +735,8 @@ export default function App() {
               </span>
             </div>
 
-            {/* Replaced <select> with a static div to enforce session isolation */}
-            <div className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white font-medium rounded-lg p-2">
+            {/* Read-only profile to enforce isolation */}
+            <div className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white font-medium rounded-lg p-2 truncate">
               {currentUser.name}
             </div>
 
@@ -1404,69 +1459,195 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= NOTES RUNBOOK VAULT ================= */}
+          {/* ================= NOTES RUNBOOK VAULT (NOTION 2-WAY SYNC) ================= */}
           {activeTab === "notes" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-sm font-bold text-white">
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
                     Sovereign Cloud Runbooks & Vault
+                    <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono rounded-full">
+                      Notion 2-Way Sync
+                    </span>
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Standard operating procedures and operational playbooks
+                    Operational SOPs synchronized directly with your Notion
+                    workspace
                   </p>
                 </div>
 
-                <div className="flex items-center gap-1.5 bg-[#18181b] p-1 rounded-xl border border-zinc-800">
-                  {["All", "Infrastructure", "Security", "Billing"].map(
-                    (tag) => (
-                      <button
-                        key={tag}
-                        onClick={() => setSelectedTag(tag)}
-                        className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
-                          selectedTag === tag
-                            ? "bg-zinc-800 text-white shadow-sm"
-                            : "text-zinc-400 hover:text-zinc-200"
-                        }`}
-                      >
-                        {tag}
-                      </button>
-                    ),
-                  )}
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5 bg-[#18181b] p-1 rounded-xl border border-zinc-800">
+                    {["All", "Infrastructure", "Security", "Update"].map(
+                      (tag) => (
+                        <button
+                          key={tag}
+                          onClick={() => setSelectedTag(tag)}
+                          className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
+                            selectedTag === tag
+                              ? "bg-zinc-800 text-white shadow-sm"
+                              : "text-zinc-400 hover:text-zinc-200"
+                          }`}
+                        >
+                          {tag}
+                        </button>
+                      ),
+                    )}
+                  </div>
+
+                  <button
+                    onClick={fetchNotes}
+                    disabled={isNotesLoading}
+                    className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white rounded-xl transition-colors"
+                    title="Pull latest notes from Notion"
+                  >
+                    <RotateCcw
+                      className={`w-3.5 h-3.5 ${
+                        isNotesLoading ? "animate-spin text-emerald-400" : ""
+                      }`}
+                    />
+                  </button>
+
+                  <button
+                    onClick={() => setIsCreatingNote(true)}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Push to Notion
+                  </button>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {filteredNotes.map((note) => (
-                  <div
-                    key={note.id}
-                    className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="flex items-center gap-1 text-[10px] font-mono text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded">
-                          <Tag className="w-3 h-3 text-zinc-500" /> {note.tag}
-                        </span>
-                        <span className="text-[10px] text-zinc-500 font-mono">
-                          Updated {note.updated}
-                        </span>
+              {/* Create Note Modal Form */}
+              {isCreatingNote && (
+                <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
+                    Add New Runbook to Notion Database
+                  </h3>
+                  <form onSubmit={handleCreateNote} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="md:col-span-2">
+                        <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                          Title
+                        </label>
+                        <input
+                          type="text"
+                          value={newTitle}
+                          onChange={(e) => setNewTitle(e.target.value)}
+                          placeholder="e.g., ZFS Pool Scrub Procedure"
+                          className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-emerald-500"
+                          required
+                        />
                       </div>
-                      <h3 className="text-sm font-bold text-white mb-2">
-                        {note.title}
-                      </h3>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        {note.snippet}
-                      </p>
+                      <div>
+                        <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                          Tag
+                        </label>
+                        <select
+                          value={newTag}
+                          onChange={(e) => setNewTag(e.target.value as any)}
+                          className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-emerald-500"
+                        >
+                          <option value="Infrastructure">Infrastructure</option>
+                          <option value="Security">Security</option>
+                          <option value="Update">Update</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                          Date
+                        </label>
+                        <input
+                          type="date"
+                          value={newDate}
+                          onChange={(e) => setNewDate(e.target.value)}
+                          className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-emerald-500 [color-scheme:dark]"
+                          required
+                        />
+                      </div>
                     </div>
-                    <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-500 font-mono">
-                      <span>Author: {note.author}</span>
-                      <button className="text-indigo-400 hover:underline">
-                        View Full Runbook
+
+                    <div>
+                      <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                        Snippet / SOP Instructions
+                      </label>
+                      <textarea
+                        value={newSnippet}
+                        onChange={(e) => setNewSnippet(e.target.value)}
+                        placeholder="Outline steps, commands, or architecture instructions..."
+                        rows={3}
+                        className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-emerald-500"
+                        required
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsCreatingNote(false)}
+                        className="px-3 py-1.5 bg-zinc-800 text-zinc-400 hover:text-white rounded-xl text-xs font-semibold"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSubmittingNote}
+                        className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold"
+                      >
+                        {isSubmittingNote
+                          ? "Pushing to Notion..."
+                          : "Create in Notion"}
                       </button>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  </form>
+                </div>
+              )}
+
+              {/* Notes Cards Grid */}
+              {notes.length === 0 ? (
+                <div className="p-12 text-center text-xs text-zinc-500 font-mono bg-[#151518] border border-zinc-800 rounded-2xl">
+                  {isNotesLoading
+                    ? "Pulling notes from Notion..."
+                    : "No runbooks found in your Notion database."}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {filteredNotes.map((note) => (
+                    <div
+                      key={note.id}
+                      className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="flex items-center gap-1 text-[10px] font-mono text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded">
+                            <Tag className="w-3 h-3 text-zinc-500" /> {note.tag}
+                          </span>
+                          <span className="text-[10px] text-zinc-500 font-mono flex items-center gap-1">
+                            <CalendarDays className="w-3 h-3 text-zinc-600" />{" "}
+                            {note.updated}
+                          </span>
+                        </div>
+                        <h3 className="text-sm font-bold text-white mb-2">
+                          {note.title}
+                        </h3>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                          {note.snippet}
+                        </p>
+                      </div>
+                      <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-500 font-mono">
+                        <span>Author: {note.author}</span>
+                        <a
+                          href={`https://notion.so/${note.id.replace(/-/g, "")}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-emerald-400 hover:underline flex items-center gap-1"
+                        >
+                          Open in Notion <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

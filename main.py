@@ -12,6 +12,7 @@ Architecture & Responsibilities:
    in browser WebSocket query parameters.
 5. Bidirectional RFB WebSocket Reverse Proxy: Dynamically bridges client RFB frame packets to 
    Proxmox's internal `vncwebsocket` daemon with dynamic header inspection.
+6. Notion Two-Way Sync (Runbooks & SOPs): Synchronizes knowledge base entries directly with Notion API.
 """
 
 import os
@@ -29,6 +30,7 @@ import bcrypt
 import requests
 import urllib3
 import websockets
+from datetime import date
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -55,6 +57,11 @@ JWT_SECRET = os.getenv("JWT_SECRET_KEY", "sovereign-cloud-cmp-secret-key-product
 JWT_ALGORITHM = "HS256"
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 120
 JWT_CONSOLE_TOKEN_EXPIRE_SECONDS = 30  # Short-lived ephemeral token for noVNC WebSocket sessions
+
+# Notion API Configuration
+NOTION_API_KEY = os.getenv("NOTION_API_KEY", "")
+NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "")
+NOTION_VERSION = "2022-06-28"
 
 # Initialize FastAPI Application
 app = FastAPI(
@@ -160,6 +167,12 @@ class ConsoleTokenRequest(BaseModel):
     node: str
     vm_type: str
     vmid: int
+
+class CreateNoteRequest(BaseModel):
+    title: str
+    tag: str
+    snippet: str
+    date: Optional[str] = None  # ISO format string: YYYY-MM-DD
 
 # ---------------------------------------------------------------------------
 # Cryptographic Token Helpers & Dependencies
@@ -581,3 +594,112 @@ async def vnc_websocket_proxy(
             await websocket.close()
         except Exception:
             pass
+
+# ---------------------------------------------------------------------------
+# Notion API Integration (Runbooks and SOPs)
+# ---------------------------------------------------------------------------
+
+def get_notion_headers():
+    return {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Notion-Version": NOTION_VERSION,
+        "Content-Type": "application/json",
+    }
+
+@app.get("/api/v1/notes")
+def get_notion_notes(user: UserContext = Depends(get_current_user)):
+    if not NOTION_API_KEY or not NOTION_DATABASE_ID:
+        raise HTTPException(status_code=500, detail="Notion credentials unconfigured in .env.")
+
+    url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
+    resp = requests.post(url, headers=get_notion_headers(), json={}, timeout=10)
+    
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"Notion sync error: {resp.text}")
+
+    results = resp.json().get("results", [])
+    notes = []
+
+    for page in results:
+        props = page.get("properties", {})
+        
+        # Title
+        title_objs = props.get("Title", {}).get("title", []) or props.get("Name", {}).get("title", [])
+        title = title_objs[0].get("plain_text", "Untitled") if title_objs else "Untitled"
+
+        # Tag
+        tag = "Infrastructure"
+        if "multi_select" in props.get("Tag", {}):
+            tags_list = props.get("Tag", {}).get("multi_select", [])
+            tag = tags_list[0].get("name", "Infrastructure") if tags_list else "Infrastructure"
+        elif "select" in props.get("Tag", {}):
+            select_obj = props.get("Tag", {}).get("select")
+            tag = select_obj.get("name", "Infrastructure") if select_obj else "Infrastructure"
+
+        # Snippet
+        snippet_objs = props.get("Snippet", {}).get("rich_text", [])
+        snippet = snippet_objs[0].get("plain_text", "") if snippet_objs else ""
+
+        # Author
+        author_objs = props.get("Author", {}).get("rich_text", [])
+        author = author_objs[0].get("plain_text", "DevOps") if author_objs else "DevOps"
+
+        # Date: Check custom "Date" property first, fallback to page last edited date
+        notion_date_obj = props.get("Date", {}).get("date")
+        entry_date = notion_date_obj.get("start") if notion_date_obj else page.get("last_edited_time", "")[:10]
+
+        notes.append({
+            "id": page.get("id"),
+            "title": title,
+            "tag": tag,
+            "snippet": snippet,
+            "author": author,
+            "updated": entry_date,
+        })
+
+    return notes
+
+@app.post("/api/v1/notes")
+def create_notion_note(req: CreateNoteRequest, user: UserContext = Depends(get_current_user)):
+    if not NOTION_API_KEY or not NOTION_DATABASE_ID:
+        raise HTTPException(status_code=500, detail="Notion credentials unconfigured in .env.")
+
+    url = "https://api.notion.com/v1/pages"
+    
+    title_property_key = "Title"
+    tag_is_multi_select = True
+    
+    db_meta = requests.get(f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}", headers=get_notion_headers(), timeout=10)
+    if db_meta.status_code == 200:
+        db_props = db_meta.json().get("properties", {})
+        for prop_name, prop_val in db_props.items():
+            if prop_val.get("type") == "title":
+                title_property_key = prop_name
+            if prop_name.lower() == "tag":
+                tag_is_multi_select = (prop_val.get("type") == "multi_select")
+
+    tag_payload = (
+        {"multi_select": [{"name": req.tag}]}
+        if tag_is_multi_select
+        else {"select": {"name": req.tag}}
+    )
+
+    # Use selected date or fallback to today
+    target_date = req.date if req.date else str(date.today())
+
+    payload = {
+        "parent": {"database_id": NOTION_DATABASE_ID},
+        "properties": {
+            title_property_key: {"title": [{"text": {"content": req.title}}]},
+            "Tag": tag_payload,
+            "Snippet": {"rich_text": [{"text": {"content": req.snippet}}]},
+            "Author": {"rich_text": [{"text": {"content": user.name or user.user_id}}]},
+            "Date": {"date": {"start": target_date}},
+        }
+    }
+
+    resp = requests.post(url, headers=get_notion_headers(), json=payload, timeout=10)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"Failed to create note in Notion: {resp.text}")
+
+    return {"status": "success", "page_id": resp.json().get("id")}

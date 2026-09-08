@@ -9,11 +9,12 @@
  * 3. Multi-Tenant RBAC Integration: Evaluates active persona boundaries (SuperAdmin, TenantAdmin,
  *    TenantViewer, BillingManager) across infrastructure actions and financial records. Strict
  *    session isolation is enforced.
- * 4. Notion Two-Way Sync: Notes and SOP Runbooks are fetched from and pushed to your Notion database,
+ * 4. Notion Two-Way Sync: Notes and Future Upgrades are fetched from and pushed to multiple Notion databases,
  *    supporting Title, Tag, Snippet, Author, and custom Date properties.
  * 5. Functional Modules Scaffolding:
  *    - Tasks: Filterable, interactive status toggle (Pending -> In Progress -> Completed).
  *    - Calendar: Maintenance windows, scheduled audit slots, and hypervisor kernel patch timelines.
+ *    - Upgrades: Syncs Hardware/Software expansion proposals with a dedicated Notion database.
  *    - Notes: Notion-backed SOP repository with interactive tag filtering (Infrastructure, Security, Update).
  *    - Chats: Support channel switcher with real-time interactive message broadcasting.
  *    - Apps: Sovereign cloud integration marketplace (Wazuh SIEM, OpenObserve, Vault, Prometheus).
@@ -25,7 +26,6 @@ import {
   BarChart3,
   Boxes,
   Users,
-  ShoppingCart,
   CheckSquare,
   Calendar as CalendarIcon,
   StickyNote,
@@ -52,6 +52,7 @@ import {
   ArrowUpRight,
   LogOut,
   KeyRound,
+  Zap,
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
 
@@ -146,14 +147,23 @@ interface NoteItem {
   updated: string;
 }
 
+interface UpgradeItem {
+  id: string;
+  title: string;
+  category: "Hardware" | "Software";
+  priority: "High" | "Medium" | "Low";
+  description: string;
+  requested_by: string;
+  date_added: string;
+}
+
 export default function App() {
-  // Navigation View State
   const [activeTab, setActiveTab] = useState<
     | "overview"
     | "analytics"
     | "workspaces"
     | "customers"
-    | "orders"
+    | "upgrades"
     | "tasks"
     | "calendar"
     | "notes"
@@ -161,10 +171,8 @@ export default function App() {
     | "apps"
   >("overview");
 
-  // Time Horizon Filter State (This Week, This Month, This Quarter)
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("month");
 
-  // Authentication State
   const [authToken, setAuthToken] = useState<string | null>(
     localStorage.getItem("cmp_jwt_token"),
   );
@@ -172,16 +180,13 @@ export default function App() {
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string>("");
 
-  // Fallback Manual Credentials
   const [loginUsername, setLoginUsername] = useState("admin-01");
   const [loginPassword, setLoginPassword] = useState("password123");
 
-  // Compute & Node Telemetry States
   const [resources, setResources] = useState<GuestResource[]>([]);
   const [telemetry, setTelemetry] = useState<NodeTelemetry | null>(null);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
 
-  // Active noVNC Terminal target state
   const [activeTerminal, setActiveTerminal] = useState<{
     node: string;
     vmType: "qemu" | "lxc";
@@ -189,7 +194,6 @@ export default function App() {
     vmName: string;
   } | null>(null);
 
-  // Tasks State
   const [taskList, setTaskList] = useState<TaskItem[]>([
     {
       id: 1,
@@ -209,27 +213,8 @@ export default function App() {
       dueDate: "Aug 30",
       assignee: "CloudHost DevOps",
     },
-    {
-      id: 3,
-      title: "Re-balance storage pool local-lvm allocations",
-      horizon: "month",
-      status: "Pending",
-      priority: "Medium",
-      dueDate: "Sep 12",
-      assignee: "Infra Ops",
-    },
-    {
-      id: 4,
-      title: "Quarterly compliance audit and SIEM event validation",
-      horizon: "quarter",
-      status: "In Progress",
-      priority: "High",
-      dueDate: "Oct 05",
-      assignee: "SecOps Team",
-    },
   ]);
 
-  // Calendar Events State
   const [calendarEvents] = useState<CalendarEvent[]>([
     {
       id: 1,
@@ -240,33 +225,13 @@ export default function App() {
       horizon: "week",
       targetNode: "pve-server",
     },
-    {
-      id: 2,
-      title: "ZFS Pool Scrubbing & Trim Procedure",
-      type: "Snapshot Backup",
-      date: "Sep 04, 2026",
-      time: "23:00 - 01:00 UTC",
-      horizon: "month",
-      targetNode: "pve-server",
-    },
-    {
-      id: 3,
-      title: "Tenant Isolation & RBAC Penetration Audit",
-      type: "Security Audit",
-      date: "Sep 18, 2026",
-      time: "09:00 - 16:00 UTC",
-      horizon: "month",
-      targetNode: "Cluster Global",
-    },
   ]);
 
-  // Notion Notes & SOP State
+  // Notes Runbook Vault State
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [selectedTag, setSelectedTag] = useState<string>("All");
   const [isNotesLoading, setIsNotesLoading] = useState<boolean>(false);
   const [isCreatingNote, setIsCreatingNote] = useState<boolean>(false);
-
-  // Form state for creating a new Notion SOP
   const [newTitle, setNewTitle] = useState("");
   const [newTag, setNewTag] = useState<
     "Infrastructure" | "Security" | "Update"
@@ -277,7 +242,21 @@ export default function App() {
   );
   const [isSubmittingNote, setIsSubmittingNote] = useState<boolean>(false);
 
-  // Support Chats State
+  // Upgrades State
+  const [upgrades, setUpgrades] = useState<UpgradeItem[]>([]);
+  const [isUpgradesLoading, setIsUpgradesLoading] = useState<boolean>(false);
+  const [isCreatingUpgrade, setIsCreatingUpgrade] = useState<boolean>(false);
+  const [upgTitle, setUpgTitle] = useState("");
+  const [upgCategory, setUpgCategory] = useState<"Hardware" | "Software">(
+    "Hardware",
+  );
+  const [upgPriority, setUpgPriority] = useState<"High" | "Medium" | "Low">(
+    "Medium",
+  );
+  const [upgDesc, setUpgDesc] = useState("");
+  const [isSubmittingUpgrade, setIsSubmittingUpgrade] =
+    useState<boolean>(false);
+
   const [activeChat, setActiveChat] = useState("tech-support");
   const [chatMessage, setChatMessage] = useState("");
   const [messages, setMessages] = useState([
@@ -288,16 +267,8 @@ export default function App() {
       text: "Node-01 migration scheduled for 02:00 UTC.",
       time: "10:14 AM",
     },
-    {
-      id: 2,
-      sender: "You",
-      role: "Admin",
-      text: "Acknowledged. Quotas and telemetry validated on host.",
-      time: "10:18 AM",
-    },
   ]);
 
-  // Sovereign Integrations Marketplace State
   const [apps] = useState([
     {
       name: "Wazuh SIEM",
@@ -305,23 +276,8 @@ export default function App() {
       status: "Installed",
       desc: "Real-time host intrusion detection and PCI-DSS sovereign log compliance.",
     },
-    {
-      name: "OpenObserve",
-      category: "Observability",
-      status: "Active",
-      desc: "Petabyte-scale cloud telemetry search and hypervisor node log ingestion.",
-    },
-    {
-      name: "Vault Zero-Trust",
-      category: "Key Management",
-      status: "Active",
-      desc: "Hardware-backed Shamir Secret Sharing cryptographic vault for tenant certificates.",
-    },
   ]);
 
-  /**
-   * Authenticates against the backend to receive a cryptographically signed JWT.
-   */
   const handleAuthenticate = async (username: string, password: string) => {
     setIsAuthenticating(true);
     setLoginError("");
@@ -364,9 +320,6 @@ export default function App() {
     );
   };
 
-  /**
-   * Validates active session on mount.
-   */
   useEffect(() => {
     if (authToken) {
       fetch("http://localhost:8000/api/v1/auth/me", {
@@ -400,18 +353,11 @@ export default function App() {
     try {
       const res = await fetch(
         "http://localhost:8000/api/v1/cluster/resources",
-        {
-          headers: getAuthHeaders(),
-        },
+        { headers: getAuthHeaders() },
       );
-      if (res.ok) {
-        setResources(await res.json());
-      } else {
-        setResources([]);
-      }
-    } catch (err) {
-      console.error("Failed to fetch cluster resources:", err);
-    }
+      if (res.ok) setResources(await res.json());
+      else setResources([]);
+    } catch (err) {}
   };
 
   const fetchTelemetry = async () => {
@@ -423,12 +369,8 @@ export default function App() {
       const res = await fetch("http://localhost:8000/api/v1/nodes/telemetry", {
         headers: getAuthHeaders(),
       });
-      if (res.ok) {
-        setTelemetry(await res.json());
-      }
-    } catch (err) {
-      console.error("Failed to fetch telemetry:", err);
-    }
+      if (res.ok) setTelemetry(await res.json());
+    } catch (err) {}
   };
 
   const fetchNotes = async () => {
@@ -438,28 +380,35 @@ export default function App() {
       const res = await fetch("http://localhost:8000/api/v1/notes", {
         headers: getAuthHeaders(),
       });
-      if (res.ok) {
-        setNotes(await res.json());
-      }
+      if (res.ok) setNotes(await res.json());
     } catch (err) {
-      console.error("Failed to pull notes from Notion:", err);
     } finally {
       setIsNotesLoading(false);
+    }
+  };
+
+  const fetchUpgrades = async () => {
+    if (!authToken) return;
+    setIsUpgradesLoading(true);
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/upgrades", {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) setUpgrades(await res.json());
+    } catch (err) {
+    } finally {
+      setIsUpgradesLoading(false);
     }
   };
 
   const handleCreateNote = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim() || !authToken) return;
-
     setIsSubmittingNote(true);
     try {
       const res = await fetch("http://localhost:8000/api/v1/notes", {
         method: "POST",
-        headers: {
-          ...getAuthHeaders(),
-          "Content-Type": "application/json",
-        },
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({
           title: newTitle.trim(),
           tag: newTag,
@@ -467,7 +416,6 @@ export default function App() {
           date: newDate,
         }),
       });
-
       if (res.ok) {
         setNewTitle("");
         setNewSnippet("");
@@ -479,9 +427,38 @@ export default function App() {
         alert(err.detail || "Failed to push note to Notion");
       }
     } catch (err) {
-      console.error("Failed to create note in Notion:", err);
     } finally {
       setIsSubmittingNote(false);
+    }
+  };
+
+  const handleCreateUpgrade = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!upgTitle.trim() || !authToken) return;
+    setIsSubmittingUpgrade(true);
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/upgrades", {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: upgTitle.trim(),
+          category: upgCategory,
+          priority: upgPriority,
+          description: upgDesc.trim(),
+        }),
+      });
+      if (res.ok) {
+        setUpgTitle("");
+        setUpgDesc("");
+        setIsCreatingUpgrade(false);
+        await fetchUpgrades();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || "Failed to push upgrade to Notion");
+      }
+    } catch (err) {
+    } finally {
+      setIsSubmittingUpgrade(false);
     }
   };
 
@@ -498,9 +475,8 @@ export default function App() {
   }, [authToken, currentUser]);
 
   useEffect(() => {
-    if (authToken && activeTab === "notes") {
-      fetchNotes();
-    }
+    if (authToken && activeTab === "notes") fetchNotes();
+    if (authToken && activeTab === "upgrades") fetchUpgrades();
   }, [authToken, activeTab]);
 
   const handlePowerAction = async (
@@ -519,14 +495,12 @@ export default function App() {
           headers: getAuthHeaders(),
         },
       );
-      if (res.ok) {
-        await fetchResources();
-      } else {
+      if (res.ok) await fetchResources();
+      else {
         const err = await res.json();
         alert(err.detail || "Action unauthorized");
       }
     } catch (err) {
-      console.error("Power action failed:", err);
     } finally {
       setActionLoading(null);
     }
@@ -609,7 +583,7 @@ export default function App() {
     ...(currentUser?.role === "SuperAdmin"
       ? [{ id: "customers", label: "Customers", icon: Users }]
       : []),
-    { id: "orders", label: "Orders & Billing", icon: ShoppingCart },
+    { id: "upgrades", label: "Future Upgrades", icon: Zap },
     { id: "tasks", label: "Tasks", icon: CheckSquare },
     { id: "calendar", label: "Calendar", icon: CalendarIcon },
     { id: "notes", label: "Notes", icon: StickyNote },
@@ -661,7 +635,6 @@ export default function App() {
                 required
               />
             </div>
-
             <div>
               <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
                 Password
@@ -675,7 +648,6 @@ export default function App() {
                 required
               />
             </div>
-
             <button
               type="submit"
               disabled={isAuthenticating}
@@ -720,10 +692,8 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-[#0d0d0f] text-zinc-100 font-sans antialiased overflow-hidden selection:bg-zinc-800">
-      {/* Sidebar Navigation */}
       <aside className="w-64 bg-[#121214] border-r border-zinc-800/80 flex flex-col justify-between shrink-0">
         <div className="p-4 flex flex-col h-full">
-          {/* Authenticated Persona Read-Only Display */}
           <div className="p-3 bg-[#18181b] border border-zinc-800 rounded-xl mb-6 shadow-sm">
             <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-2 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
@@ -734,12 +704,9 @@ export default function App() {
                 JWT Valid
               </span>
             </div>
-
-            {/* Read-only profile to enforce isolation */}
             <div className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white font-medium rounded-lg p-2 truncate">
               {currentUser.name}
             </div>
-
             <div className="mt-2 text-[10px] font-mono text-zinc-400 flex flex-col gap-1">
               <div className="flex justify-between">
                 <span>Role:</span>
@@ -787,32 +754,24 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Main Container */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Header Bar */}
         <header className="h-16 border-b border-zinc-800/80 bg-[#121214]/60 backdrop-blur-md px-8 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-6">
             <h1 className="text-lg font-bold text-white tracking-tight capitalize">
-              {activeTab}
+              {activeTab === "upgrades" ? "Future Upgrades" : activeTab}
             </h1>
-
             <div className="bg-[#18181b] p-1 rounded-xl border border-zinc-800 flex items-center shadow-inner">
               {(["week", "month", "quarter"] as const).map((filter) => (
                 <button
                   key={filter}
                   onClick={() => setTimeFilter(filter)}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-all ${
-                    timeFilter === filter
-                      ? "bg-zinc-800 text-white shadow-sm border border-zinc-700/60"
-                      : "text-zinc-400 hover:text-zinc-200"
-                  }`}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-all ${timeFilter === filter ? "bg-zinc-800 text-white shadow-sm border border-zinc-700/60" : "text-zinc-400 hover:text-zinc-200"}`}
                 >
                   This {filter}
                 </button>
               ))}
             </div>
           </div>
-
           <div className="flex items-center gap-4">
             <div className="px-3 py-1.5 bg-zinc-800/80 border border-zinc-700/60 rounded-xl text-xs font-mono text-zinc-300">
               User:{" "}
@@ -821,7 +780,6 @@ export default function App() {
           </div>
         </header>
 
-        {/* Dynamic Route Content */}
         <main className="flex-1 overflow-y-auto p-8 space-y-6">
           {/* ================= OVERVIEW VIEW ================= */}
           {activeTab === "overview" && (
@@ -847,7 +805,6 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
                     <span className="text-xs font-semibold">
@@ -865,7 +822,6 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
                     <span className="text-xs font-semibold">Task Velocity</span>
@@ -880,7 +836,6 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
                     <span className="text-xs font-semibold">
@@ -904,7 +859,7 @@ export default function App() {
                 <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
                   <div>
                     <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                      <Activity className="w-4 h-4 text-emerald-400" />
+                      <Activity className="w-4 h-4 text-emerald-400" />{" "}
                       Provisioned Virtual Machines
                     </h2>
                     <p className="text-[11px] text-zinc-400">
@@ -920,7 +875,6 @@ export default function App() {
                     <RotateCcw className="w-3.5 h-3.5" />
                   </button>
                 </div>
-
                 {resources.length === 0 ? (
                   <div className="p-12 text-center text-xs text-zinc-500 font-mono">
                     {currentUser.role === "BillingManager"
@@ -948,7 +902,7 @@ export default function App() {
                           <td className="px-6 py-4 font-medium text-white flex items-center gap-2">
                             <span className="font-mono text-zinc-500">
                               #{vm.vmid}
-                            </span>
+                            </span>{" "}
                             {vm.name}
                           </td>
                           <td className="px-6 py-4 text-zinc-400">{vm.node}</td>
@@ -987,10 +941,8 @@ export default function App() {
                                   : ""
                               }
                             >
-                              <Terminal className="w-3.5 h-3.5" />
-                              Console
+                              <Terminal className="w-3.5 h-3.5" /> Console
                             </button>
-
                             {canControlPower ? (
                               vm.status === "running" ? (
                                 <button
@@ -1004,7 +956,6 @@ export default function App() {
                                   }
                                   disabled={actionLoading === vm.vmid}
                                   className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg border border-rose-500/20"
-                                  title="Graceful Shutdown"
                                 >
                                   <Square className="w-3.5 h-3.5" />
                                 </button>
@@ -1020,7 +971,6 @@ export default function App() {
                                   }
                                   disabled={actionLoading === vm.vmid}
                                   className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg border border-emerald-500/20"
-                                  title="Power On"
                                 >
                                   <Play className="w-3.5 h-3.5" />
                                 </button>
@@ -1070,7 +1020,6 @@ export default function App() {
                       : "Polling CPU sockets..."}
                   </p>
                 </div>
-
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
                   <div className="flex items-center justify-between text-zinc-400 mb-2">
                     <span className="text-xs font-semibold">
@@ -1095,7 +1044,6 @@ export default function App() {
                       : "Calculating system RAM..."}
                   </p>
                 </div>
-
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6">
                   <div className="flex items-center justify-between text-zinc-400 mb-2">
                     <span className="text-xs font-semibold">
@@ -1136,13 +1084,7 @@ export default function App() {
                     Multi-tenant compute partitions and SDN boundaries
                   </p>
                 </div>
-                {canControlPower && (
-                  <button className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5">
-                    <Plus className="w-3.5 h-3.5" /> Create Workspace
-                  </button>
-                )}
               </div>
-
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {[
                   {
@@ -1264,60 +1206,183 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= ORDERS & BILLING VIEW ================= */}
-          {activeTab === "orders" && (
-            <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
-              <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
+          {/* ================= FUTURE UPGRADES & EXPANSION VIEW ================= */}
+          {activeTab === "upgrades" && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-sm font-bold text-white">
-                    Billing Statements & Invoices
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                    Future Upgrades & Expansion
+                    <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-mono rounded-full">
+                      Notion 2-Way Sync
+                    </span>
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Recurring compute charges for this {timeFilter}
+                    Hardware requirements and software scaling proposals
                   </p>
                 </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={fetchUpgrades}
+                    disabled={isUpgradesLoading}
+                    className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white rounded-xl transition-colors"
+                  >
+                    <RotateCcw
+                      className={`w-3.5 h-3.5 ${isUpgradesLoading ? "animate-spin text-emerald-400" : ""}`}
+                    />
+                  </button>
+
+                  <button
+                    onClick={() => setIsCreatingUpgrade(true)}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Propose Upgrade
+                  </button>
+                </div>
               </div>
-              <table className="w-full text-left text-xs text-zinc-300">
-                <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
-                  <tr>
-                    <th className="px-6 py-3">Invoice ID</th>
-                    <th className="px-6 py-3">Description</th>
-                    <th className="px-6 py-3">Amount</th>
-                    <th className="px-6 py-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/60">
-                  {[
-                    {
-                      id: "INV-2026-089",
-                      desc: "Compute Expansion (32GB RAM)",
-                      amount: "$420.00",
-                      status: "Paid",
-                    },
-                    {
-                      id: "INV-2026-088",
-                      desc: "Monthly Hypervisor Tenant Subscription",
-                      amount: "$1,200.00",
-                      status: "Paid",
-                    },
-                  ].map((order, i) => (
-                    <tr key={i} className="hover:bg-zinc-800/20">
-                      <td className="px-6 py-4 font-mono font-medium text-white">
-                        {order.id}
-                      </td>
-                      <td className="px-6 py-4 text-zinc-300">{order.desc}</td>
-                      <td className="px-6 py-4 font-mono text-white">
-                        {order.amount}
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="px-2 py-0.5 bg-sky-500/10 text-sky-400 text-[10px] font-semibold rounded-full">
-                          {order.status}
-                        </span>
-                      </td>
-                    </tr>
+
+              {isCreatingUpgrade && (
+                <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
+                    Submit New Upgrade Requirement
+                  </h3>
+                  <form onSubmit={handleCreateUpgrade} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="md:col-span-1">
+                        <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                          Title
+                        </label>
+                        <input
+                          type="text"
+                          value={upgTitle}
+                          onChange={(e) => setUpgTitle(e.target.value)}
+                          placeholder="e.g., 64GB DDR5 RAM Array"
+                          className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                          Category
+                        </label>
+                        <select
+                          value={upgCategory}
+                          onChange={(e) =>
+                            setUpgCategory(e.target.value as any)
+                          }
+                          className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500"
+                        >
+                          <option value="Hardware">Hardware</option>
+                          <option value="Software">Software</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                          Priority
+                        </label>
+                        <select
+                          value={upgPriority}
+                          onChange={(e) =>
+                            setUpgPriority(e.target.value as any)
+                          }
+                          className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500"
+                        >
+                          <option value="High">High</option>
+                          <option value="Medium">Medium</option>
+                          <option value="Low">Low</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                        Description & Justification
+                      </label>
+                      <textarea
+                        value={upgDesc}
+                        onChange={(e) => setUpgDesc(e.target.value)}
+                        placeholder="Provide specifications or software requirements..."
+                        rows={3}
+                        className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsCreatingUpgrade(false)}
+                        className="px-3 py-1.5 bg-zinc-800 text-zinc-400 hover:text-white rounded-xl text-xs font-semibold"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSubmittingUpgrade}
+                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold"
+                      >
+                        {isSubmittingUpgrade
+                          ? "Pushing..."
+                          : "Submit to Notion"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {upgrades.length === 0 ? (
+                <div className="p-12 text-center text-xs text-zinc-500 font-mono bg-[#151518] border border-zinc-800 rounded-2xl">
+                  {isUpgradesLoading
+                    ? "Polling Notion database..."
+                    : "No future upgrades tracked in Notion."}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {upgrades.map((upg) => (
+                    <div
+                      key={upg.id}
+                      className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              upg.priority === "High"
+                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                : upg.priority === "Medium"
+                                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                  : "bg-sky-500/10 text-sky-400 border border-sky-500/20"
+                            }`}
+                          >
+                            {upg.priority}
+                          </span>
+                          <span className="text-[10px] font-mono text-zinc-500 flex items-center gap-1 border border-zinc-800 bg-zinc-900 px-2 py-0.5 rounded">
+                            {upg.category}
+                          </span>
+                        </div>
+                        <h3 className="text-sm font-bold text-white mb-2">
+                          {upg.title}
+                        </h3>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                          {upg.description}
+                        </p>
+                      </div>
+                      <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-500 font-mono">
+                        <span>By: {upg.requested_by}</span>
+                        <a
+                          href={`https://notion.so/${upg.id.replace(/-/g, "")}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-indigo-400 hover:underline flex items-center gap-1"
+                        >
+                          View <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
+                </div>
+              )}
             </div>
           )}
 
@@ -1359,7 +1424,7 @@ export default function App() {
                         className="hover:bg-zinc-800/20 transition-colors"
                       >
                         <td className="px-6 py-4 font-medium text-white flex items-center gap-2">
-                          <CheckSquare className="w-4 h-4 text-zinc-500 shrink-0" />
+                          <CheckSquare className="w-4 h-4 text-zinc-500 shrink-0" />{" "}
                           {task.title}
                         </td>
                         <td className="px-6 py-4 capitalize font-mono text-zinc-400">
@@ -1367,11 +1432,7 @@ export default function App() {
                         </td>
                         <td className="px-6 py-4">
                           <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                              task.priority === "High"
-                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                                : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                            }`}
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${task.priority === "High" ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" : "bg-amber-500/10 text-amber-400 border border-amber-500/20"}`}
                           >
                             {task.priority}
                           </span>
@@ -1385,13 +1446,7 @@ export default function App() {
                         <td className="px-6 py-4 text-right">
                           <button
                             onClick={() => toggleTaskStatus(task.id)}
-                            className={`px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-all ${
-                              task.status === "Completed"
-                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
-                                : task.status === "In Progress"
-                                  ? "bg-sky-500/10 text-sky-400 border-sky-500/20 hover:bg-sky-500/20"
-                                  : "bg-zinc-800/60 text-zinc-400 border-zinc-700 hover:bg-zinc-800"
-                            }`}
+                            className={`px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-all ${task.status === "Completed" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : task.status === "In Progress" ? "bg-sky-500/10 text-sky-400 border-sky-500/20 hover:bg-sky-500/20" : "bg-zinc-800/60 text-zinc-400 border-zinc-700 hover:bg-zinc-800"}`}
                           >
                             {task.status} ↻
                           </button>
@@ -1483,31 +1538,22 @@ export default function App() {
                         <button
                           key={tag}
                           onClick={() => setSelectedTag(tag)}
-                          className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
-                            selectedTag === tag
-                              ? "bg-zinc-800 text-white shadow-sm"
-                              : "text-zinc-400 hover:text-zinc-200"
-                          }`}
+                          className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${selectedTag === tag ? "bg-zinc-800 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
                         >
                           {tag}
                         </button>
                       ),
                     )}
                   </div>
-
                   <button
                     onClick={fetchNotes}
                     disabled={isNotesLoading}
                     className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white rounded-xl transition-colors"
-                    title="Pull latest notes from Notion"
                   >
                     <RotateCcw
-                      className={`w-3.5 h-3.5 ${
-                        isNotesLoading ? "animate-spin text-emerald-400" : ""
-                      }`}
+                      className={`w-3.5 h-3.5 ${isNotesLoading ? "animate-spin text-emerald-400" : ""}`}
                     />
                   </button>
-
                   <button
                     onClick={() => setIsCreatingNote(true)}
                     className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 shadow-sm"
@@ -1517,7 +1563,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Create Note Modal Form */}
               {isCreatingNote && (
                 <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
@@ -1593,16 +1638,13 @@ export default function App() {
                         disabled={isSubmittingNote}
                         className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold"
                       >
-                        {isSubmittingNote
-                          ? "Pushing to Notion..."
-                          : "Create in Notion"}
+                        {isSubmittingNote ? "Pushing..." : "Create in Notion"}
                       </button>
                     </div>
                   </form>
                 </div>
               )}
 
-              {/* Notes Cards Grid */}
               {notes.length === 0 ? (
                 <div className="p-12 text-center text-xs text-zinc-500 font-mono bg-[#151518] border border-zinc-800 rounded-2xl">
                   {isNotesLoading
@@ -1663,11 +1705,7 @@ export default function App() {
                     <button
                       key={ch}
                       onClick={() => setActiveChat(ch)}
-                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all ${
-                        activeChat === ch
-                          ? "bg-zinc-800 text-white font-semibold shadow-sm"
-                          : "text-zinc-400 hover:bg-zinc-800/40"
-                      }`}
+                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeChat === ch ? "bg-zinc-800 text-white font-semibold shadow-sm" : "text-zinc-400 hover:bg-zinc-800/40"}`}
                     >
                       #{ch}
                     </button>
@@ -1751,11 +1789,7 @@ export default function App() {
                           {app.category}
                         </span>
                         <span
-                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                            app.status === "Active"
-                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                              : "bg-zinc-800 text-zinc-400"
-                          }`}
+                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${app.status === "Active" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-zinc-800 text-zinc-400"}`}
                         >
                           {app.status}
                         </span>

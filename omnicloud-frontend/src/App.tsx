@@ -1,62 +1,57 @@
 /**
- * Sovereign Cloud Management Platform (CMP) & Cloud CRM Dashboard.
+ * OmniOps Sovereign Homelab Operations Center
  *
- * Developer Notes:
- * 1. Time Horizon Filter: "This Week", "This Month", and "This Quarter" dynamically re-calculate
- *    CRM progress, revenue MRR, completed task velocity, and tenant provisioning rates.
- * 2. Cryptographic JWT Authentication: Requests signed Bearer tokens from /api/v1/auth/login and
- *    attaches Authorization headers across all protected endpoints.
- * 3. Multi-Tenant RBAC Integration: Evaluates active persona boundaries across infrastructure actions.
- * 4. Rich Bare-Metal Telemetry & Real-Time SVG Graphs.
- * 5. Notion Two-Way Sync: Notes (Runbooks) and Future Upgrades & Expansion across separate databases.
- * 6. Hosted Apps: Launchpad for active server services (Proxmox, Wazuh, Immich, NextCloud, Tailscale).
+ * Architecture & Modules:
+ * 1. Hypervisor Gateway: Multi-guest compute inspection with isolated noVNC WebSocket consoles.
+ * 2. Bare-Metal Telemetry: Real-time SVG time-series graphs for CPU, RAM, NVMe/HDD storage, and Network I/O.
+ * 3. Service Catalog: Health-check matrix and latency probes across homelab containers and services.
+ * 4. Security & Audit: Host intrusion events, SSH logins, and container status feeds.
+ * 5. Maintenance Operations: Snapshot management, ZFS scrubs, and maintenance workflows.
+ * 6. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks and Future Hardware Expansions.
+ * 7. Service Launchpad: Direct access to hosted web applications.
  */
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard,
   BarChart3,
   Boxes,
-  Users,
-  CheckSquare,
+  Activity,
+  ShieldCheck,
   Calendar as CalendarIcon,
   StickyNote,
-  MessageSquare,
+  Wrench,
   Grid,
   Terminal,
   Play,
   Square,
   RotateCcw,
   Server,
-  Activity,
   CheckCircle2,
   Clock,
   Cpu,
   HardDrive,
   Plus,
   ExternalLink,
-  Send,
   Lock,
   UserCheck,
   CalendarDays,
   Tag,
-  TrendingUp,
-  ArrowUpRight,
   LogOut,
   KeyRound,
   Zap,
   Radio,
   Disc,
   Layers,
-  ShieldCheck,
   Cloud,
   Image as ImageIcon,
   Network,
+  Globe,
+  Filter,
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
 
-type Role = "SuperAdmin" | "TenantAdmin" | "TenantViewer" | "BillingManager";
-type TimeFilter = "week" | "month" | "quarter";
+type Role = "SuperAdmin" | "TenantAdmin" | "TenantViewer" | "Operator";
 
 interface PersonaProfile {
   userId: string;
@@ -78,21 +73,21 @@ const PERSONA_ACCOUNTS: PersonaProfile[] = [
     userId: "tenant-alex",
     role: "TenantAdmin",
     tenantId: "tenant-alpha",
-    name: "Alpha Corp (TenantAdmin)",
+    name: "Alpha Workloads (Admin)",
     defaultPassword: "password123",
   },
   {
     userId: "viewer-sam",
     role: "TenantViewer",
     tenantId: "tenant-alpha",
-    name: "Alpha Corp (TenantViewer)",
+    name: "Homelab Guest (Viewer)",
     defaultPassword: "password123",
   },
   {
-    userId: "finance-claire",
-    role: "BillingManager",
+    userId: "operator-ops",
+    role: "Operator",
     tenantId: "tenant-alpha",
-    name: "Finance (BillingManager)",
+    name: "Infrastructure Operator",
     defaultPassword: "password123",
   },
 ];
@@ -192,23 +187,22 @@ interface NodeTelemetry {
   history: TelemetrySample[];
 }
 
-interface TaskItem {
+interface MaintenanceTask {
   id: number;
   title: string;
-  horizon: TimeFilter;
+  category: "Storage" | "Hypervisor" | "Security" | "Backup";
   status: "Pending" | "In Progress" | "Completed";
   priority: "High" | "Medium" | "Low";
-  dueDate: string;
-  assignee: string;
+  scheduled: string;
+  target: string;
 }
 
 interface CalendarEvent {
   id: number;
   title: string;
-  type: "Maintenance" | "Security Audit" | "Billing Review" | "Snapshot Backup";
+  type: "Maintenance" | "Security Audit" | "ZFS Scrub" | "Snapshot Backup";
   date: string;
   time: string;
-  horizon: TimeFilter;
   targetNode: string;
 }
 
@@ -229,6 +223,26 @@ interface UpgradeItem {
   description: string;
   requested_by: string;
   date_added: string;
+}
+
+interface ServiceEndpoint {
+  name: string;
+  category: string;
+  url: string;
+  port: number;
+  status: "Healthy" | "Degraded" | "Offline";
+  latency_ms: number;
+  host_node: string;
+  uptime_pct: number;
+}
+
+interface SecurityAuditLog {
+  id: string;
+  timestamp: string;
+  level: "INFO" | "WARN" | "CRITICAL";
+  source: string;
+  event: string;
+  ip_address: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,18 +277,15 @@ function TelemetryAreaChart({
   const width = 600;
   const height = 170;
   const padding = 20;
-
   const maxDataPoints = 30;
   const step = (width - 2 * padding) / Math.max(maxDataPoints - 1, 1);
 
   const points = data.map((d, index) => {
     const rawVal = Number(d[dataKey]) || 0;
     const clampedVal = Math.min(Math.max(rawVal, 0), maxValue);
-
     const x = padding + index * step;
     const y =
       height - padding - (clampedVal / maxValue) * (height - 2 * padding);
-
     return { x, y, val: rawVal, time: d.time };
   });
 
@@ -350,7 +361,6 @@ function TelemetryAreaChart({
               stroke="#71717a"
               strokeDasharray="3 3"
             />
-
             <rect
               x={Math.max(0, Math.min(points[hoveredIdx].x - 35, width - 70))}
               y={0}
@@ -360,7 +370,6 @@ function TelemetryAreaChart({
               rx="6"
               stroke="#3f3f46"
             />
-
             <text
               x={Math.max(35, Math.min(points[hoveredIdx].x, width - 35))}
               y={13}
@@ -383,7 +392,6 @@ function TelemetryAreaChart({
               {points[hoveredIdx].val.toFixed(1)}
               {unit}
             </text>
-
             <circle
               cx={points[hoveredIdx].x}
               cy={points[hoveredIdx].y}
@@ -420,7 +428,7 @@ function TelemetryAreaChart({
       <div className="flex justify-between text-[10px] font-mono text-zinc-500 mt-1 px-2">
         <span>{points[0]?.time || ""}</span>
         <span className="text-zinc-400 font-semibold">
-          Now: {points[points.length - 1]?.val} {unit}
+          Current: {points[points.length - 1]?.val} {unit}
         </span>
         <span>{points[points.length - 1]?.time || ""}</span>
       </div>
@@ -442,7 +450,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
   const width = 600;
   const height = 170;
   const padding = 20;
-
   const maxDataPoints = 30;
   const step = (width - 2 * padding) / Math.max(maxDataPoints - 1, 1);
 
@@ -554,7 +561,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
                 stroke="#71717a"
                 strokeDasharray="3 3"
               />
-
               <rect
                 x={Math.max(
                   0,
@@ -567,7 +573,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
                 rx="6"
                 stroke="#3f3f46"
               />
-
               <text
                 x={Math.max(45, Math.min(rxPoints[hoveredIdx].x, width - 45))}
                 y={12}
@@ -600,7 +605,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
               >
                 TX: {txPoints[hoveredIdx].val.toFixed(1)} KB/s
               </text>
-
               <circle
                 cx={rxPoints[hoveredIdx].x}
                 cy={rxPoints[hoveredIdx].y}
@@ -649,16 +653,14 @@ export default function App() {
     | "overview"
     | "analytics"
     | "workspaces"
-    | "customers"
+    | "services"
+    | "security"
     | "upgrades"
-    | "tasks"
+    | "maintenance"
     | "calendar"
     | "notes"
-    | "chats"
     | "apps"
   >("overview");
-
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>("month");
 
   const [authToken, setAuthToken] = useState<string | null>(
     localStorage.getItem("cmp_jwt_token"),
@@ -681,24 +683,148 @@ export default function App() {
     vmName: string;
   } | null>(null);
 
-  const [taskList, setTaskList] = useState<TaskItem[]>([
+  const [services] = useState<ServiceEndpoint[]>([
+    {
+      name: "Proxmox Virtual Environment",
+      category: "Virtualization Engine",
+      url: "https://pve-server.exocomet-gamut.ts.net:8006",
+      port: 8006,
+      status: "Healthy",
+      latency_ms: 2,
+      host_node: "pve-server",
+      uptime_pct: 99.98,
+    },
+    {
+      name: "Immich Photo Archive",
+      category: "Media & Computer Vision",
+      url: "http://immich-server.exocomet-gamut.ts.net",
+      port: 2283,
+      status: "Healthy",
+      latency_ms: 6,
+      host_node: "102 (Immich-LXC)",
+      uptime_pct: 99.95,
+    },
+    {
+      name: "AdGuard Home DNS",
+      category: "Network Security & Filtering",
+      url: "http://192.168.1.101:3000",
+      port: 3000,
+      status: "Healthy",
+      latency_ms: 1,
+      host_node: "101 (AdGuard-LXC)",
+      uptime_pct: 100.0,
+    },
+    {
+      name: "Nextcloud Workspace",
+      category: "Productivity & Storage",
+      url: "https://ryan-ubuntu-home-server.exocomet-gamut.ts.net",
+      port: 443,
+      status: "Healthy",
+      latency_ms: 12,
+      host_node: "100 (Ubuntu-VM)",
+      uptime_pct: 99.89,
+    },
+    {
+      name: "Wazuh SIEM Manager",
+      category: "Threat Detection & Auditing",
+      url: "https://100.116.163.29:8443",
+      port: 8443,
+      status: "Healthy",
+      latency_ms: 4,
+      host_node: "100 (Ubuntu-VM)",
+      uptime_pct: 99.92,
+    },
+    {
+      name: "Nginx Proxy Manager",
+      category: "Ingress Router",
+      url: "http://192.168.1.103:81",
+      port: 81,
+      status: "Healthy",
+      latency_ms: 2,
+      host_node: "103 (Nginx-LXC)",
+      uptime_pct: 99.99,
+    },
+  ]);
+
+  const [securityLogs] = useState<SecurityAuditLog[]>([
+    {
+      id: "SEC-902",
+      timestamp: "Just now",
+      level: "INFO",
+      source: "pve-server",
+      event: "PAM user 'root@pam' authenticated via internal ticket",
+      ip_address: "192.168.1.50",
+    },
+    {
+      id: "SEC-901",
+      timestamp: "4 mins ago",
+      level: "WARN",
+      source: "Wazuh-HIDS",
+      event: "Multiple SSH connection attempts blocked by Fail2Ban",
+      ip_address: "185.220.101.5",
+    },
+    {
+      id: "SEC-900",
+      timestamp: "18 mins ago",
+      level: "INFO",
+      source: "101 (AdGuard-LXC)",
+      event: "DNS blocklist synchronized (412,890 rules active)",
+      ip_address: "Localhost",
+    },
+    {
+      id: "SEC-899",
+      timestamp: "1 hour ago",
+      level: "INFO",
+      source: "Tailscale-Subnet",
+      event: "Mesh node 'ryan-ubuntu-home-server' route verified",
+      ip_address: "100.116.163.29",
+    },
+    {
+      id: "SEC-898",
+      timestamp: "3 hours ago",
+      level: "CRITICAL",
+      source: "Wazuh-HIDS",
+      event: "Root privilege escalation detected in 100 (Ubuntu-VM) by ryan",
+      ip_address: "100.64.0.12",
+    },
+  ]);
+
+  const [maintenanceTasks, setMaintenanceTasks] = useState<MaintenanceTask[]>([
     {
       id: 1,
-      title: "Inspect QEMU-100 zero-knowledge vault backups",
-      horizon: "week",
+      title: "ZFS Storage Pool scrub and silent corruption trim",
+      category: "Storage",
       status: "Completed",
       priority: "High",
-      dueDate: "Aug 28",
-      assignee: "Alex Rivera",
+      scheduled: "Aug 28",
+      target: "local-lvm",
     },
     {
       id: 2,
-      title: "Apply kernel patch to node pve-server",
-      horizon: "week",
+      title: "Proxmox Linux kernel microcode patch (pve-manager 8.x)",
+      category: "Hypervisor",
       status: "In Progress",
       priority: "High",
-      dueDate: "Aug 30",
-      assignee: "CloudHost DevOps",
+      scheduled: "Aug 30",
+      target: "pve-server",
+    },
+    {
+      id: 3,
+      title: "Proxmox Backup Server (PBS) snapshot pruning & deduplication",
+      category: "Backup",
+      status: "Pending",
+      priority: "Medium",
+      scheduled: "Sep 12",
+      target: "PBS-Target",
+    },
+    {
+      id: 4,
+      title: "Rotate Tailscale authorization keys and renew TLS certificates",
+      category: "Security",
+      status: "In Progress",
+      priority: "High",
+      scheduled: "Oct 05",
+      target: "Cluster-Wide",
     },
   ]);
 
@@ -709,8 +835,23 @@ export default function App() {
       type: "Maintenance",
       date: "Aug 29, 2026",
       time: "02:00 - 03:00 UTC",
-      horizon: "week",
       targetNode: "pve-server",
+    },
+    {
+      id: 2,
+      title: "ZFS Pool Scrubbing & Trim Procedure",
+      type: "ZFS Scrub",
+      date: "Sep 04, 2026",
+      time: "23:00 - 01:00 UTC",
+      targetNode: "pve-server",
+    },
+    {
+      id: 3,
+      title: "Network Isolation & WireGuard Key Rotation",
+      type: "Security Audit",
+      date: "Sep 18, 2026",
+      time: "09:00 - 16:00 UTC",
+      targetNode: "Tailscale Mesh",
     },
   ]);
 
@@ -742,19 +883,6 @@ export default function App() {
   const [isSubmittingUpgrade, setIsSubmittingUpgrade] =
     useState<boolean>(false);
 
-  const [activeChat, setActiveChat] = useState("tech-support");
-  const [chatMessage, setChatMessage] = useState("");
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      sender: "Alex Rivera",
-      role: "DevOps Lead",
-      text: "Node-01 migration scheduled for 02:00 UTC.",
-      time: "10:14 AM",
-    },
-  ]);
-
-  // Integrated Server Applications
   const [apps] = useState([
     {
       name: "Proxmox VE",
@@ -1027,37 +1155,8 @@ export default function App() {
     }
   };
 
-  const crmMetrics = useMemo(() => {
-    switch (timeFilter) {
-      case "week":
-        return {
-          mrr: "$1,850",
-          growth: "+14.2%",
-          bandwidth: "840 GB",
-          activeVmsDelta: "+2 deployed",
-          taskCompletionPct: 80,
-        };
-      case "month":
-        return {
-          mrr: "$3,600",
-          growth: "+22.5%",
-          bandwidth: "4.2 TB",
-          activeVmsDelta: "+6 deployed",
-          taskCompletionPct: 65,
-        };
-      case "quarter":
-        return {
-          mrr: "$11,400",
-          growth: "+38.9%",
-          bandwidth: "18.6 TB",
-          activeVmsDelta: "+14 deployed",
-          taskCompletionPct: 54,
-        };
-    }
-  }, [timeFilter]);
-
-  const toggleTaskStatus = (id: number) => {
-    setTaskList((prev) =>
+  const toggleMaintenanceStatus = (id: number) => {
+    setMaintenanceTasks((prev) =>
       prev.map((t) => {
         if (t.id === id) {
           const nextStatus =
@@ -1073,22 +1172,6 @@ export default function App() {
     );
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatMessage.trim()) return;
-    setMessages([
-      ...messages,
-      {
-        id: Date.now(),
-        sender: "You",
-        role: currentUser?.role || "User",
-        text: chatMessage,
-        time: "Just now",
-      },
-    ]);
-    setChatMessage("");
-  };
-
   const canControlPower =
     currentUser?.role === "SuperAdmin" || currentUser?.role === "TenantAdmin";
   const canAccessConsole =
@@ -1098,18 +1181,16 @@ export default function App() {
   const navItems = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
     ...(canViewHostTelemetry
-      ? [{ id: "analytics", label: "Analytics", icon: BarChart3 }]
+      ? [{ id: "analytics", label: "Host Telemetry", icon: BarChart3 }]
       : []),
-    { id: "workspaces", label: "Workspaces", icon: Boxes },
-    ...(currentUser?.role === "SuperAdmin"
-      ? [{ id: "customers", label: "Customers", icon: Users }]
-      : []),
-    { id: "upgrades", label: "Future Upgrades", icon: Zap },
-    { id: "tasks", label: "Tasks", icon: CheckSquare },
-    { id: "calendar", label: "Calendar", icon: CalendarIcon },
-    { id: "notes", label: "Notes", icon: StickyNote },
-    { id: "chats", label: "Chats", icon: MessageSquare },
-    { id: "apps", label: "Apps", icon: Grid },
+    { id: "workspaces", label: "Partitions & SDN", icon: Boxes },
+    { id: "services", label: "Service Catalog", icon: Globe },
+    { id: "security", label: "Security & SIEM", icon: ShieldCheck },
+    { id: "upgrades", label: "Hardware Expansion", icon: Zap },
+    { id: "maintenance", label: "Operations & Backups", icon: Wrench },
+    { id: "calendar", label: "Maintenance Windows", icon: CalendarIcon },
+    { id: "notes", label: "Runbooks & SOPs", icon: StickyNote },
+    { id: "apps", label: "Services Launchpad", icon: Grid },
   ];
 
   if (!authToken || !currentUser) {
@@ -1122,7 +1203,7 @@ export default function App() {
             </div>
             <div>
               <h2 className="text-lg font-bold text-white">
-                OmniCloud Authentication
+                OmniOps Homelab Authentication
               </h2>
               <p className="text-xs text-zinc-400">
                 Sovereign Control Plane Token Gateway
@@ -1175,8 +1256,8 @@ export default function App() {
               className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold text-xs rounded-xl transition-colors shadow-sm"
             >
               {isAuthenticating
-                ? "Validating Token Claims..."
-                : "Sign In & Issue JWT"}
+                ? "Verifying Token Claims..."
+                : "Authorize Control Plane"}
             </button>
           </form>
 
@@ -1202,12 +1283,8 @@ export default function App() {
     );
   }
 
-  const filteredTasks = taskList.filter(
-    (t) => t.horizon === timeFilter || timeFilter === "quarter",
-  );
-  const filteredEvents = calendarEvents.filter(
-    (e) => e.horizon === timeFilter || timeFilter === "quarter",
-  );
+  const filteredTasks = maintenanceTasks;
+  const filteredEvents = calendarEvents;
   const filteredNotes =
     selectedTag === "All" ? notes : notes.filter((n) => n.tag === selectedTag);
 
@@ -1219,8 +1296,8 @@ export default function App() {
           <div className="p-3 bg-[#18181b] border border-zinc-800 rounded-xl mb-6 shadow-sm">
             <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-2 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
-                <UserCheck className="w-3.5 h-3.5 text-emerald-400" /> Active
-                Session
+                <UserCheck className="w-3.5 h-3.5 text-emerald-400" /> Operator
+                Active
               </span>
               <span className="px-1.5 py-0.2 bg-emerald-500/10 text-emerald-400 text-[9px] font-mono rounded">
                 JWT Valid
@@ -1235,7 +1312,7 @@ export default function App() {
                 <strong className="text-emerald-400">{currentUser.role}</strong>
               </div>
               <div className="flex justify-between">
-                <span>Tenant:</span>
+                <span>Scope:</span>
                 <strong className="text-sky-400">{currentUser.tenantId}</strong>
               </div>
             </div>
@@ -1282,24 +1359,17 @@ export default function App() {
           <div className="flex items-center gap-6">
             <h1 className="text-lg font-bold text-white tracking-tight capitalize">
               {activeTab === "upgrades"
-                ? "Future Upgrades & Expansion"
-                : activeTab}
+                ? "Hardware & Software Expansion"
+                : activeTab === "services"
+                  ? "Service Catalog & Health Matrix"
+                  : activeTab === "security"
+                    ? "Security Telemetry & Audit Logs"
+                    : activeTab === "maintenance"
+                      ? "Maintenance & Backup Operations"
+                      : activeTab === "analytics"
+                        ? "Host Bare-Metal Telemetry"
+                        : activeTab}
             </h1>
-            <div className="bg-[#18181b] p-1 rounded-xl border border-zinc-800 flex items-center shadow-inner">
-              {(["week", "month", "quarter"] as const).map((filter) => (
-                <button
-                  key={filter}
-                  onClick={() => setTimeFilter(filter)}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-all ${
-                    timeFilter === filter
-                      ? "bg-zinc-800 text-white shadow-sm border border-zinc-700/60"
-                      : "text-zinc-400 hover:text-zinc-200"
-                  }`}
-                >
-                  This {filter}
-                </button>
-              ))}
-            </div>
           </div>
           <div className="flex items-center gap-4">
             <div className="px-3 py-1.5 bg-zinc-800/80 border border-zinc-700/60 rounded-xl text-xs font-mono text-zinc-300">
@@ -1313,12 +1383,12 @@ export default function App() {
           {/* ================= OVERVIEW VIEW ================= */}
           {activeTab === "overview" && (
             <>
-              {/* Dynamic CRM Metrics Grid */}
+              {/* Core Infrastructure Metrics Grid */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
                     <span className="text-xs font-semibold">
-                      Managed Instances
+                      Managed Compute Guests
                     </span>
                     <Server className="w-4 h-4 text-emerald-400" />
                   </div>
@@ -1328,73 +1398,78 @@ export default function App() {
                     </span>
                     <p className="text-[11px] text-zinc-400 mt-1 flex items-center gap-1">
                       <span className="text-emerald-400 font-medium">
-                        {crmMetrics.activeVmsDelta}
+                        {resources.filter((r) => r.status === "running").length}{" "}
+                        online
                       </span>{" "}
-                      this {timeFilter}
+                      active workloads
                     </p>
                   </div>
                 </div>
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
                     <span className="text-xs font-semibold">
-                      CRM Run-Rate MRR
+                      Active Service Endpoints
                     </span>
-                    <TrendingUp className="w-4 h-4 text-indigo-400" />
+                    <Globe className="w-4 h-4 text-indigo-400" />
                   </div>
                   <div className="mt-4">
                     <span className="text-3xl font-bold text-white tracking-tight">
-                      {crmMetrics.mrr}
+                      {services.length}
                     </span>
                     <p className="text-[11px] text-emerald-400 mt-1 flex items-center gap-0.5">
-                      <ArrowUpRight className="w-3.5 h-3.5" />{" "}
-                      {crmMetrics.growth} from previous {timeFilter}
-                    </p>
-                  </div>
-                </div>
-                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
-                  <div className="flex items-center justify-between text-zinc-400">
-                    <span className="text-xs font-semibold">Task Velocity</span>
-                    <CheckCircle2 className="w-4 h-4 text-sky-400" />
-                  </div>
-                  <div className="mt-4">
-                    <span className="text-3xl font-bold text-white tracking-tight">
-                      {crmMetrics.taskCompletionPct}%
-                    </span>
-                    <p className="text-[11px] text-zinc-400 mt-1">
-                      Milestones cleared in window
+                      <CheckCircle2 className="w-3.5 h-3.5" /> All systems
+                      responding
                     </p>
                   </div>
                 </div>
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
                     <span className="text-xs font-semibold">
-                      Edge Ingress Bandwidth
+                      Security Events (24h)
+                    </span>
+                    <ShieldCheck className="w-4 h-4 text-sky-400" />
+                  </div>
+                  <div className="mt-4">
+                    <span className="text-3xl font-bold text-white tracking-tight">
+                      {securityLogs.length}
+                    </span>
+                    <p className="text-[11px] text-zinc-400 mt-1">
+                      Wazuh & Fail2ban monitoring
+                    </p>
+                  </div>
+                </div>
+                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-zinc-400">
+                    <span className="text-xs font-semibold">
+                      Network I/O Throughput
                     </span>
                     <Activity className="w-4 h-4 text-amber-400" />
                   </div>
                   <div className="mt-4">
                     <span className="text-3xl font-bold text-white tracking-tight">
-                      {crmMetrics.bandwidth}
+                      {telemetry
+                        ? `${telemetry.network.rx_rate_kbps} KB/s`
+                        : "---"}
                     </span>
                     <p className="text-[11px] text-zinc-400 mt-1">
-                      Sovereign overlay routing
+                      Tailscale overlay routing
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Guest Compute Infrastructure Grid */}
+              {/* Workload Inventory Grid */}
               <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
                 <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
                   <div>
                     <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                      <Activity className="w-4 h-4 text-emerald-400" />{" "}
-                      Provisioned Virtual Machines
+                      <Activity className="w-4 h-4 text-emerald-400" /> Virtual
+                      Machines & Containers
                     </h2>
                     <p className="text-[11px] text-zinc-400">
                       {currentUser.role === "SuperAdmin"
-                        ? "Global Cluster View (All Tenants)"
-                        : `Tenant Scoped View (${currentUser.tenantId})`}
+                        ? "Global Hypervisor Inventory (pve-server)"
+                        : `Scope: Partition (${currentUser.tenantId})`}
                     </p>
                   </div>
                   <button
@@ -1406,16 +1481,15 @@ export default function App() {
                 </div>
                 {resources.length === 0 ? (
                   <div className="p-12 text-center text-xs text-zinc-500 font-mono">
-                    {currentUser.role === "BillingManager"
-                      ? "Billing Manager Role has no permission to view compute instances."
-                      : "No instances assigned to this tenant workspace."}
+                    No instances assigned to this workspace partition.
                   </div>
                 ) : (
                   <table className="w-full text-left text-xs text-zinc-300">
                     <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
                       <tr>
-                        <th className="px-6 py-3">Guest</th>
+                        <th className="px-6 py-3">Workload</th>
                         <th className="px-6 py-3">Node</th>
+                        <th className="px-6 py-3">Type</th>
                         <th className="px-6 py-3">State</th>
                         <th className="px-6 py-3">CPU</th>
                         <th className="px-6 py-3">Memory</th>
@@ -1436,7 +1510,14 @@ export default function App() {
                           </td>
                           <td className="px-6 py-4 text-zinc-400">{vm.node}</td>
                           <td className="px-6 py-4">
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            <span className="uppercase font-mono text-[10px] text-zinc-400">
+                              {vm.type}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${vm.status === "running" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-zinc-800 text-zinc-500 border border-zinc-700"}`}
+                            >
                               {vm.status}
                             </span>
                           </td>
@@ -1525,13 +1606,12 @@ export default function App() {
           {/* ================= TELEMETRY ANALYTICS WITH GRAPHS ================= */}
           {activeTab === "analytics" && canViewHostTelemetry && (
             <div className="space-y-6">
-              {/* Top System Health Bar */}
               <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-2">
                     <Radio className="w-4 h-4 text-emerald-400 animate-pulse" />
                     <h2 className="text-sm font-bold text-white uppercase tracking-wider">
-                      Proxmox Host: {telemetry?.node || "pve-node"}
+                      Proxmox Host: {telemetry?.node || "pve-server"}
                     </h2>
                     <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-mono">
                       Bare-Metal Online
@@ -1572,9 +1652,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Primary Graphs Row: CPU Usage & Memory Graphs */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* CPU Telemetry & Real-Time Graph */}
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-2">
@@ -1605,7 +1683,6 @@ export default function App() {
                   />
                 </div>
 
-                {/* Memory & Swap Telemetry Graph */}
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-2">
@@ -1638,9 +1715,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Second Graphs Row: Network Bandwidth & Storage Pools */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Network Traffic & Bandwidth Graph */}
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-2">
@@ -1662,7 +1737,6 @@ export default function App() {
 
                   <NetworkThroughputChart data={telemetry?.history || []} />
 
-                  {/* Active Network Interfaces Badges */}
                   <div className="mt-4 pt-4 border-t border-zinc-800 flex flex-wrap items-center gap-2">
                     {telemetry?.network.interfaces?.map((iface) => (
                       <span
@@ -1678,7 +1752,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Storage Telemetry: SSD vs HDD Root Storage Breakdown */}
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-2">
@@ -1698,7 +1771,6 @@ export default function App() {
                     </p>
                   </div>
 
-                  {/* Primary Rootfs Meter Bar */}
                   <div className="space-y-4">
                     <div>
                       <div className="flex justify-between text-xs font-mono text-zinc-400 mb-1">
@@ -1719,7 +1791,6 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Discovered Storage Pools (SSD / HDD) */}
                     <div className="space-y-2 mt-4">
                       {telemetry?.storage.pools?.map((pool) => (
                         <div
@@ -1765,7 +1836,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Physical Disks Info */}
                   <div className="mt-4 pt-4 border-t border-zinc-800 flex flex-wrap gap-2">
                     {telemetry?.storage.disks?.map((disk) => (
                       <div
@@ -1787,41 +1857,41 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= WORKSPACES VIEW ================= */}
+          {/* ================= WORKSPACES & PARTITIONS VIEW ================= */}
           {activeTab === "workspaces" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-sm font-bold text-white">
-                    Isolated Tenant Workspaces
+                    Isolated Tenant Partitions
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Multi-tenant compute partitions and SDN boundaries
+                    Compute boundaries and SDN VLAN allocations
                   </p>
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {[
                   {
-                    name: "Alpha Cloud Solutions",
+                    name: "Alpha Core Services",
                     vlan: "VLAN 101",
                     vms: 3,
                     quota: "32GB RAM / 8 vCPU",
-                    tier: "Enterprise",
+                    tier: "Production",
                   },
                   {
-                    name: "FinTech Vault Core",
+                    name: "Vault & Data Storage",
                     vlan: "VLAN 102",
                     vms: 2,
                     quota: "16GB RAM / 4 vCPU",
-                    tier: "Dedicated",
+                    tier: "Encrypted",
                   },
                   {
                     name: "DevSecOps Sandbox",
                     vlan: "VLAN 104",
                     vms: 0,
                     quota: "64GB RAM / 16 vCPU",
-                    tier: "Internal",
+                    tier: "Experimental",
                   },
                 ].map((ws, i) => (
                   <div
@@ -1845,7 +1915,7 @@ export default function App() {
                       </p>
                     </div>
                     <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-400">
-                      <span>{ws.vms} Instances</span>
+                      <span>{ws.vms} Workloads</span>
                       <button className="text-indigo-400 hover:underline flex items-center gap-1">
                         Configure <ExternalLink className="w-3 h-3" />
                       </button>
@@ -1856,68 +1926,139 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= CUSTOMERS VIEW ================= */}
-          {activeTab === "customers" && currentUser.role === "SuperAdmin" && (
+          {/* ================= SERVICE CATALOG ================= */}
+          {activeTab === "services" && (
             <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
               <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
                 <div>
                   <h2 className="text-sm font-bold text-white">
-                    Partner Tenant Accounts
+                    Homelab Service Catalog & Health Matrix
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Active contracts, billing schedules, and assigned nodes
+                    Active container and VM endpoints, response latencies, and
+                    uptime probes
                   </p>
                 </div>
               </div>
               <table className="w-full text-left text-xs text-zinc-300">
                 <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
                   <tr>
-                    <th className="px-6 py-3">Tenant Name</th>
+                    <th className="px-6 py-3">Service Name</th>
+                    <th className="px-6 py-3">Category</th>
                     <th className="px-6 py-3">Status</th>
-                    <th className="px-6 py-3">Instances</th>
-                    <th className="px-6 py-3">MRR</th>
-                    <th className="px-6 py-3">Primary Contact</th>
+                    <th className="px-6 py-3">Host Node</th>
+                    <th className="px-6 py-3">Latency</th>
+                    <th className="px-6 py-3">SLA Availability</th>
+                    <th className="px-6 py-3 text-right">Direct Endpoint</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60">
-                  {[
-                    {
-                      name: "Alpha Cloud Solutions",
-                      status: "Active",
-                      vms: "3 Instances",
-                      mrr: "$1,200",
-                      contact: "ops@alphacloud.io",
-                    },
-                    {
-                      name: "FinTech Vault Core",
-                      status: "Active",
-                      vms: "2 Instances",
-                      mrr: "$2,400",
-                      contact: "security@fintechvault.io",
-                    },
-                  ].map((cust, i) => (
+                  {services.map((svc, i) => (
                     <tr key={i} className="hover:bg-zinc-800/20">
-                      <td className="px-6 py-4 font-semibold text-white">
-                        {cust.name}
+                      <td className="px-6 py-4 font-semibold text-white flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />{" "}
+                        {svc.name}
+                      </td>
+                      <td className="px-6 py-4 text-zinc-400">
+                        {svc.category}
                       </td>
                       <td className="px-6 py-4">
-                        <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold rounded-full">
-                          {cust.status}
+                        <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold rounded-full border border-emerald-500/20">
+                          {svc.status}
                         </span>
                       </td>
                       <td className="px-6 py-4 font-mono text-zinc-400">
-                        {cust.vms}
+                        {svc.host_node}
                       </td>
-                      <td className="px-6 py-4 font-mono text-white font-medium">
-                        {cust.mrr}
+                      <td className="px-6 py-4 font-mono text-emerald-400">
+                        {svc.latency_ms} ms
                       </td>
-                      <td className="px-6 py-4 text-zinc-400">
-                        {cust.contact}
+                      <td className="px-6 py-4 font-mono text-zinc-300">
+                        {svc.uptime_pct}%
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <a
+                          href={svc.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-indigo-400 hover:underline inline-flex items-center gap-1 font-mono"
+                        >
+                          :{svc.port} <ExternalLink className="w-3 h-3" />
+                        </a>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* ================= SECURITY & SIEM TELEMETRY ================= */}
+          {activeTab === "security" && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />{" "}
+                    Security Telemetry & SIEM Audit Stream
+                  </h2>
+                  <p className="text-xs text-zinc-400">
+                    Live security events streamed from Wazuh HIDS and PAM
+                    authentication monitors
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 bg-[#18181b] px-3 py-1.5 rounded-xl border border-zinc-800 text-xs font-mono text-zinc-400">
+                  <Filter className="w-3.5 h-3.5" /> Filter:{" "}
+                  <strong className="text-white">All Alerts</strong>
+                </div>
+              </div>
+
+              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
+                <table className="w-full text-left text-xs text-zinc-300">
+                  <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
+                    <tr>
+                      <th className="px-6 py-3">Alert ID</th>
+                      <th className="px-6 py-3">Severity</th>
+                      <th className="px-6 py-3">Source Sensor</th>
+                      <th className="px-6 py-3">Audit Event Summary</th>
+                      <th className="px-6 py-3">Origin IP / Host</th>
+                      <th className="px-6 py-3 text-right">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60 font-mono">
+                    {securityLogs.map((log) => (
+                      <tr key={log.id} className="hover:bg-zinc-800/20">
+                        <td className="px-6 py-4 text-zinc-400">{log.id}</td>
+                        <td className="px-6 py-4">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              log.level === "CRITICAL"
+                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                : log.level === "WARN"
+                                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                  : "bg-sky-500/10 text-sky-400 border border-sky-500/20"
+                            }`}
+                          >
+                            {log.level}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-white font-semibold">
+                          {log.source}
+                        </td>
+                        <td className="px-6 py-4 font-sans text-zinc-200">
+                          {log.event}
+                        </td>
+                        <td className="px-6 py-4 text-zinc-400">
+                          {log.ip_address}
+                        </td>
+                        <td className="px-6 py-4 text-right text-zinc-500">
+                          {log.timestamp}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
@@ -1927,13 +2068,14 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                    Future Upgrades & Expansion
+                    Future Upgrades & Hardware Expansion
                     <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-mono rounded-full">
                       Notion 2-Way Sync
                     </span>
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Hardware requirements and software scaling proposals
+                    Hardware expansion tracks and container memory capacity
+                    requests
                   </p>
                 </div>
 
@@ -1960,7 +2102,7 @@ export default function App() {
               {isCreatingUpgrade && (
                 <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
-                    Submit New Upgrade Requirement
+                    Submit Hardware/Software Expansion Requirement
                   </h3>
                   <form onSubmit={handleCreateUpgrade} className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1972,7 +2114,7 @@ export default function App() {
                           type="text"
                           value={upgTitle}
                           onChange={(e) => setUpgTitle(e.target.value)}
-                          placeholder="e.g., 64GB DDR5 RAM Array"
+                          placeholder="e.g., Crucial 64GB DDR5 ECC Kit"
                           className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500"
                           required
                         />
@@ -2017,7 +2159,7 @@ export default function App() {
                       <textarea
                         value={upgDesc}
                         onChange={(e) => setUpgDesc(e.target.value)}
-                        placeholder="Provide specifications or software requirements..."
+                        placeholder="Detail PCIe lanes, memory channels, or software dependencies..."
                         rows={3}
                         className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500"
                         required
@@ -2038,8 +2180,8 @@ export default function App() {
                         className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold"
                       >
                         {isSubmittingUpgrade
-                          ? "Pushing..."
-                          : "Submit to Notion"}
+                          ? "Submitting..."
+                          : "Push to Notion"}
                       </button>
                     </div>
                   </form>
@@ -2091,7 +2233,7 @@ export default function App() {
                           rel="noreferrer"
                           className="text-indigo-400 hover:underline flex items-center gap-1"
                         >
-                          View <ExternalLink className="w-3 h-3" />
+                          View in Notion <ExternalLink className="w-3 h-3" />
                         </a>
                       </div>
                     </div>
@@ -2101,21 +2243,21 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= TASKS VIEW ================= */}
-          {activeTab === "tasks" && (
+          {/* ================= MAINTENANCE & BACKUP OPS ================= */}
+          {activeTab === "maintenance" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-sm font-bold text-white">
-                    DevOps & Infrastructure Milestones
+                    Maintenance Operations & Backup Schedules
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Operational tasks filtered for this {timeFilter} (Click
-                    status to advance)
+                    Scheduled ZFS scrubs, hypervisor patch procedures, and PBS
+                    backup retention
                   </p>
                 </div>
                 <div className="text-xs font-mono text-zinc-400 bg-[#18181b] px-3 py-1.5 rounded-xl border border-zinc-800">
-                  Active in Horizon:{" "}
+                  Active Jobs:{" "}
                   <strong className="text-white">{filteredTasks.length}</strong>
                 </div>
               </div>
@@ -2124,12 +2266,12 @@ export default function App() {
                 <table className="w-full text-left text-xs text-zinc-300">
                   <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
                     <tr>
-                      <th className="px-6 py-3">Task Description</th>
-                      <th className="px-6 py-3">Horizon</th>
+                      <th className="px-6 py-3">Operation Details</th>
+                      <th className="px-6 py-3">Category</th>
                       <th className="px-6 py-3">Priority</th>
-                      <th className="px-6 py-3">Assignee</th>
-                      <th className="px-6 py-3">Due Date</th>
-                      <th className="px-6 py-3 text-right">Status Action</th>
+                      <th className="px-6 py-3">Target Workload</th>
+                      <th className="px-6 py-3">Execution Date</th>
+                      <th className="px-6 py-3 text-right">Job Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/60">
@@ -2139,11 +2281,11 @@ export default function App() {
                         className="hover:bg-zinc-800/20 transition-colors"
                       >
                         <td className="px-6 py-4 font-medium text-white flex items-center gap-2">
-                          <CheckSquare className="w-4 h-4 text-zinc-500 shrink-0" />{" "}
+                          <Wrench className="w-4 h-4 text-zinc-500 shrink-0" />{" "}
                           {task.title}
                         </td>
                         <td className="px-6 py-4 capitalize font-mono text-zinc-400">
-                          {task.horizon}
+                          {task.category}
                         </td>
                         <td className="px-6 py-4">
                           <span
@@ -2156,15 +2298,15 @@ export default function App() {
                             {task.priority}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-zinc-300">
-                          {task.assignee}
+                        <td className="px-6 py-4 font-mono text-zinc-300">
+                          {task.target}
                         </td>
                         <td className="px-6 py-4 font-mono text-zinc-400">
-                          {task.dueDate}
+                          {task.scheduled}
                         </td>
                         <td className="px-6 py-4 text-right">
                           <button
-                            onClick={() => toggleTaskStatus(task.id)}
+                            onClick={() => toggleMaintenanceStatus(task.id)}
                             className={`px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-all ${
                               task.status === "Completed"
                                 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
@@ -2193,8 +2335,7 @@ export default function App() {
                     Scheduled Maintenance Windows
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Target hypervisor maintenance and auditing windows for this{" "}
-                    {timeFilter}
+                    Target hypervisor maintenance and auditing windows
                   </p>
                 </div>
               </div>
@@ -2245,14 +2386,14 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                    Sovereign Cloud Runbooks & Vault
+                    Sovereign Homelab Runbooks & SOPs
                     <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono rounded-full">
                       Notion 2-Way Sync
                     </span>
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Operational SOPs synchronized directly with your Notion
-                    workspace
+                    Operational standard procedures synchronized directly with
+                    Notion
                   </p>
                 </div>
 
@@ -2377,7 +2518,7 @@ export default function App() {
               {notes.length === 0 ? (
                 <div className="p-12 text-center text-xs text-zinc-500 font-mono bg-[#151518] border border-zinc-800 rounded-2xl">
                   {isNotesLoading
-                    ? "Pulling notes from Notion..."
+                    ? "Pulling runbooks from Notion..."
                     : "No runbooks found in your Notion database."}
                 </div>
               ) : (
@@ -2422,80 +2563,6 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= CHATS VIEW ================= */}
-          {activeTab === "chats" && (
-            <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl h-[600px] flex overflow-hidden shadow-sm">
-              <div className="w-64 border-r border-zinc-800 p-4 flex flex-col">
-                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">
-                  Support Channels
-                </h3>
-                <div className="space-y-1 flex-1">
-                  {["tech-support", "devops-alerts", "tenant-sla"].map((ch) => (
-                    <button
-                      key={ch}
-                      onClick={() => setActiveChat(ch)}
-                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all ${
-                        activeChat === ch
-                          ? "bg-zinc-800 text-white font-semibold shadow-sm"
-                          : "text-zinc-400 hover:bg-zinc-800/40"
-                      }`}
-                    >
-                      #{ch}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex-1 flex flex-col justify-between bg-[#121214]">
-                <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-                  <span className="text-xs font-bold text-white">
-                    #{activeChat}
-                  </span>
-                  <span className="text-[10px] text-zinc-500 font-mono">
-                    Encrypted Sovereign Channel
-                  </span>
-                </div>
-
-                <div className="flex-1 p-6 overflow-y-auto space-y-4">
-                  {messages.map((m) => (
-                    <div key={m.id} className="flex flex-col">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-zinc-200">
-                          {m.sender}
-                        </span>
-                        <span className="text-[10px] text-zinc-500">
-                          {m.role} • {m.time}
-                        </span>
-                      </div>
-                      <p className="text-xs text-zinc-300 mt-1 bg-zinc-900 border border-zinc-800/80 rounded-xl p-3 inline-block max-w-lg">
-                        {m.text}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-
-                <form
-                  onSubmit={handleSendMessage}
-                  className="p-4 border-t border-zinc-800 flex gap-2"
-                >
-                  <input
-                    type="text"
-                    value={chatMessage}
-                    onChange={(e) => setChatMessage(e.target.value)}
-                    placeholder="Broadcast message to channel..."
-                    className="flex-1 bg-[#18181b] border border-zinc-800 rounded-xl px-4 py-2 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-700"
-                  />
-                  <button
-                    type="submit"
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5"
-                  >
-                    <Send className="w-3.5 h-3.5" /> Send
-                  </button>
-                </form>
-              </div>
-            </div>
-          )}
-
           {/* ================= APPS VIEW ================= */}
           {activeTab === "apps" && (
             <div className="space-y-6">
@@ -2505,8 +2572,8 @@ export default function App() {
                     Sovereign Cloud Applications
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Integrated security telemetry pipelines and cloud
-                    applications
+                    Direct launchpad for containerized services and hypervisor
+                    portals
                   </p>
                 </div>
               </div>
@@ -2525,13 +2592,7 @@ export default function App() {
                             <AppIcon className="w-3.5 h-3.5 text-zinc-400 group-hover:text-emerald-400 transition-colors" />
                             {app.category}
                           </span>
-                          <span
-                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                              app.status === "Active"
-                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                : "bg-zinc-800 text-zinc-400"
-                            }`}
-                          >
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                             {app.status}
                           </span>
                         </div>

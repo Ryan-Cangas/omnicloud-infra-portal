@@ -4,17 +4,12 @@ Sovereign Cloud Management Platform (CMP) Control Plane & Hypervisor Gateway.
 Architecture & Responsibilities:
 1. Cryptographic Authentication & RBAC (JWT): Issues signed HS256 access tokens containing user_id,
    role, and tenant_id claims.
-2. Proxmox Hypervisor Communication: Supports both Proxmox API Tokens (Key/Secret) and standard PAM/PVE
-   user authentication via proxmoxer.
-3. Strict Tenant & Role Isolation: Enforces VM boundaries across tenants (e.g., Alpha Corp vs. FinTech Core)
-   and restricts personas (SuperAdmin, TenantAdmin, TenantViewer, BillingManager).
-4. Ephemeral Single-Use WebSocket Tokens: Issues 30-second scoped console tokens to prevent token reuse
-   in browser WebSocket query parameters.
-5. Bidirectional RFB WebSocket Reverse Proxy: Dynamically bridges client RFB frame packets to 
-   Proxmox's internal `vncwebsocket` daemon with dynamic header inspection.
-6. Deep Hardware Telemetry & Time-Series: Provides metrics for CPU, RAM, SSD/HDD storage,
-   network RX/TX rates, and uptime.
-7. Notion Two-Way Sync: Syncs Runbooks and Future Upgrades across separate Notion databases.
+2. Proxmox Hypervisor Communication: Supports Proxmox API Tokens and standard PAM/PVE authentication via proxmoxer.
+3. Node & Workload Isolation: Enforces VM and container isolation boundaries across users and roles.
+4. Ephemeral Single-Use WebSocket Tokens: Issues 30-second scoped console tokens for out-of-band noVNC access.
+5. Bidirectional RFB WebSocket Reverse Proxy: Bridges client RFB frame streams to Proxmox's internal vncwebsocket daemon.
+6. Bare-Metal Telemetry & Time-Series: Metrics engine for CPU, RAM, NVMe/SSD rootfs, HDD pools, network RX/TX, and uptime.
+7. Notion Two-Way Sync: Native synchronization for Homelab Runbooks and Future Hardware/Software Expansions.
 """
 
 import os
@@ -61,14 +56,12 @@ NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "")
 NOTION_UPGRADES_DATABASE_ID = os.getenv("NOTION_UPGRADES_DATABASE_ID", "")
 NOTION_VERSION = "2022-06-28"
 
-# Sliding window buffer to maintain graph telemetry points (up to 30 intervals)
 TELEMETRY_STREAM_BUFFER = deque(maxlen=30)
-LAST_NETWORK_SNAPSHOT = {"time": 0.0, "netin": 0, "netout": 0}
 
 app = FastAPI(
-    title="Sovereign Cloud CMP & Hypervisor Proxy Engine",
-    description="Multi-tenant cloud management control plane with isolated hypervisor proxies.",
-    version="1.3.0"
+    title="OmniOps Homelab Control Plane & Hypervisor Gateway",
+    description="Sovereign homelab management control plane with isolated hypervisor proxies.",
+    version="2.0.0"
 )
 
 app.add_middleware(
@@ -97,7 +90,7 @@ else:
 
 TENANT_VM_MAP = {
     "tenant-alpha": [100, 101, 102],
-    "tenant-fintech": [103, 104],
+    "tenant-fintech": [103, 104, 105],
 }
 
 def hash_password(password: str) -> str:
@@ -133,13 +126,13 @@ USERS_DB = {
         "tenant_id": "tenant-alpha",
         "name": "Tenant Viewer",
     },
-    "finance-claire": {
-        "user_id": "finance-claire",
-        "username": "finance-claire",
+    "operator-ops": {
+        "user_id": "operator-ops",
+        "username": "operator-ops",
         "password_hash": DEFAULT_DEV_HASH,
-        "role": "BillingManager",
+        "role": "Operator",
         "tenant_id": "tenant-alpha",
-        "name": "Finance Manager",
+        "name": "Infra Operator",
     },
 }
 
@@ -203,18 +196,15 @@ def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depen
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid cryptographic token.")
 
 def enforce_vm_access(vmid: int, user: UserContext, required_action: str = "view"):
-    if user.role == "BillingManager":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: Billing personas cannot interact with hypervisor workloads.")
-
     if user.role == "SuperAdmin":
         return
 
     allowed_vmids = TENANT_VM_MAP.get(user.tenant_id, [])
     if vmid not in allowed_vmids:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Access Denied: VM {vmid} does not belong to tenant partition '{user.tenant_id}'.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Access Denied: Workload {vmid} is outside partition '{user.tenant_id}'.")
 
     if required_action in ["power", "console"] and user.role == "TenantViewer":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Forbidden: Role '{user.role}' does not have '{required_action}' privileges.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Forbidden: Role '{user.role}' lacks '{required_action}' privileges.")
 
 def get_pve_auth_headers_and_cookies():
     if PROXMOX_TOKEN_NAME and PROXMOX_TOKEN_VALUE:
@@ -315,9 +305,6 @@ def issue_ephemeral_console_token(req: ConsoleTokenRequest, user: UserContext = 
 
 @app.get("/api/v1/cluster/resources")
 def get_cluster_inventory(user: UserContext = Depends(get_current_user)):
-    if user.role == "BillingManager":
-        return []
-
     try:
         resources = proxmox.cluster.resources.get(type="vm")
         allowed_vmids = TENANT_VM_MAP.get(user.tenant_id, [])
@@ -378,15 +365,11 @@ def generate_vnc_proxy_ticket(node: str, vm_type: str, vmid: int, user: UserCont
         raise HTTPException(status_code=500, detail=f"VNC Proxy initialization failed: {str(e)}")
 
 # ---------------------------------------------------------------------------
-# Detailed Bare-Metal & Hypervisor Telemetry Route
+# Telemetry Analytics & Audit Routes
 # ---------------------------------------------------------------------------
 
 @app.get("/api/v1/nodes/telemetry")
 def get_node_telemetry(user: UserContext = Depends(get_current_user)):
-    """
-    Retrieves deep bare-metal compute statistics (CPU, RAM, HDD/SSD storage pools,
-    physical drives, network interfaces, and time-series history points).
-    """
     if user.role != "SuperAdmin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Host telemetry access restricted to SuperAdmin.")
 
@@ -403,7 +386,6 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
         root_fs = node_status.get("rootfs", {})
         loadavg = node_status.get("loadavg", [0.0, 0.0, 0.0])
 
-        # 1. Fetch Storage Pools (ZFS, LVM, Directory, NFS)
         pools = []
         try:
             storage_list = proxmox.nodes(primary_node).storage.get()
@@ -428,7 +410,6 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
         except Exception:
             pass
 
-        # 2. Fetch Physical Disks (NVMe, SSD, HDD, Health, S.M.A.R.T.)
         disks = []
         try:
             disk_list = proxmox.nodes(primary_node).disks.list.get()
@@ -452,7 +433,6 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
         except Exception:
             pass
 
-        # 3. Fetch Network Interfaces & Calculate Live Bandwidth
         net_interfaces = []
         try:
             net_list = proxmox.nodes(primary_node).network.get()
@@ -467,7 +447,6 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
         except Exception:
             pass
 
-        # 4. RRD Data & Rolling History Synthesis
         cpu_pct = round(min(max(node_status.get("cpu", 0) * 100, 0.0), 100.0), 2)
         mem_pct = round(min(max((memory.get("used", 0) / max(memory.get("total", 1), 1)) * 100, 0.0), 100.0), 2)
         storage_pct = round(min(max((root_fs.get("used", 0) / max(root_fs.get("total", 1), 1)) * 100, 0.0), 100.0), 2)
@@ -477,13 +456,12 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
         try:
             rrd = proxmox.nodes(primary_node).rrddata.get(timeframe="hour")
             if rrd:
-                # Take the last 20 samples from RRD
                 for sample in rrd[-20:]:
                     t_stamp = datetime.fromtimestamp(sample.get("time", 0)).strftime("%H:%M")
                     c_val = round(min(max(sample.get("cpu", 0) * 100, 0.0), 100.0), 1)
                     m_val = round(min(max((sample.get("memused", 0) / max(sample.get("memtotal", 1), 1)) * 100, 0.0), 100.0), 1)
-                    net_in = round(sample.get("netin", 0) / 1024, 1)    # KB/s
-                    net_out = round(sample.get("netout", 0) / 1024, 1)  # KB/s
+                    net_in = round(sample.get("netin", 0) / 1024, 1)
+                    net_out = round(sample.get("netout", 0) / 1024, 1)
                     history_points.append({
                         "time": t_stamp,
                         "cpu": c_val,
@@ -496,21 +474,14 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
         except Exception:
             pass
 
-        # Fallback to in-memory sliding buffer if RRD returns empty or is unprivileged
         now_time_str = datetime.now().strftime("%H:%M:%S")
         if not history_points:
-            # Estimate incremental network rates
-            current_netin = 0
-            current_netout = 0
-            rx_rate_kbps = 124.5
-            tx_rate_kbps = 88.2
-
             TELEMETRY_STREAM_BUFFER.append({
                 "time": now_time_str,
                 "cpu": cpu_pct,
                 "memory": mem_pct,
-                "net_in": rx_rate_kbps,
-                "net_out": tx_rate_kbps,
+                "net_in": 124.5,
+                "net_out": 88.2,
                 "storage": storage_pct,
                 "iowait": iowait_pct
             })

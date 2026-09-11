@@ -8,7 +8,7 @@ Architecture & Responsibilities:
 4. Ephemeral Single-Use WebSocket Tokens: Issues 30-second scoped console tokens for out-of-band noVNC access.
 5. Bidirectional RFB WebSocket Reverse Proxy: Bridges client RFB streams to Proxmox's internal vncwebsocket daemon.
 6. Bare-Metal Telemetry & Time-Series: Metrics engine for CPU, RAM, NVMe/HDD, network RX/TX, and uptime.
-7. Notion Two-Way Sync: Native synchronization for Homelab Runbooks and Hardware Expansions.
+7. Notion Two-Way Sync: Native synchronization for Homelab Runbooks and Hardware Expansions with Status & Deletion support.
 8. MFA Integration: Enforces TOTP (Microsoft Authenticator) for SuperAdmin logins.
 """
 
@@ -149,6 +149,10 @@ class CreateUpgradeRequest(BaseModel):
     category: str
     priority: str
     description: str
+    status: Optional[str] = "Pending"
+
+class UpdateUpgradeStatusRequest(BaseModel):
+    status: str
 
 security_scheme = HTTPBearer(auto_error=False)
 
@@ -181,7 +185,6 @@ def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depen
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid cryptographic token.")
 
 def enforce_vm_access(vmid: int, user: UserContext, required_action: str = "view"):
-    # Guests are strictly prohibited from mutating state or accessing the console
     if required_action in ["power", "console"] and user.role != "SuperAdmin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
@@ -248,23 +251,17 @@ def get_live_network_throughput(proxmox_client):
     
     return round(rx_rate_bps / 1024, 2), round(tx_rate_bps / 1024, 2)
 
-# ---------------------------------------------------------------------------
-# Authentication Routes
-# ---------------------------------------------------------------------------
-
 @app.post("/api/v1/auth/login")
 def login(req: LoginRequest):
     user_record = USERS_DB.get(req.username)
     if not user_record or not verify_password(req.password, user_record["password_hash"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password.")
 
-    # Enforce MFA for SuperAdmin
     if user_record["role"] == "SuperAdmin":
         if not req.mfa_code:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Microsoft Authenticator code required.")
         
         totp = pyotp.TOTP(ADMIN_MFA_SECRET)
-        # valid_window=1 allows a 30-second tolerance for minor clock drift
         if not totp.verify(req.mfa_code, valid_window=1):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Authenticator code. Please try again.")
 
@@ -311,10 +308,6 @@ def issue_ephemeral_console_token(req: ConsoleTokenRequest, user: UserContext = 
         expires_delta=timedelta(seconds=JWT_CONSOLE_TOKEN_EXPIRE_SECONDS)
     )
     return {"console_token": console_token}
-
-# ---------------------------------------------------------------------------
-# Hypervisor API Route Controllers
-# ---------------------------------------------------------------------------
 
 @app.get("/api/v1/cluster/resources")
 def get_cluster_inventory(user: UserContext = Depends(get_current_user)):
@@ -370,10 +363,6 @@ def generate_vnc_proxy_ticket(node: str, vm_type: str, vmid: int, user: UserCont
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"VNC Proxy initialization failed: {str(e)}")
-
-# ---------------------------------------------------------------------------
-# Telemetry Analytics & Audit Routes
-# ---------------------------------------------------------------------------
 
 @app.get("/api/v1/nodes/telemetry")
 def get_node_telemetry(user: UserContext = Depends(get_current_user)):
@@ -538,10 +527,6 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ---------------------------------------------------------------------------
-# WebSocket Tunnel (Secured by Ephemeral Console JWT)
-# ---------------------------------------------------------------------------
-
 @app.websocket("/api/v1/ws/vnc/{node}/{vm_type}/{vmid}")
 async def vnc_websocket_proxy(
     websocket: WebSocket,
@@ -625,10 +610,6 @@ async def vnc_websocket_proxy(
             await websocket.close()
         except Exception:
             pass
-
-# ---------------------------------------------------------------------------
-# Notion API Integration: Runbooks & Future Upgrades
-# ---------------------------------------------------------------------------
 
 def get_notion_headers():
     return {
@@ -757,6 +738,16 @@ def get_notion_upgrades(user: UserContext = Depends(get_current_user)):
             pri_obj = props.get("Priority", {}).get("select")
             pri = pri_obj.get("name", "Medium") if pri_obj else "Medium"
 
+        status_val = "Pending"
+        if "Status" in props:
+            st_prop = props["Status"]
+            if st_prop.get("type") == "select" and st_prop.get("select"):
+                status_val = st_prop["select"].get("name", "Pending")
+            elif st_prop.get("type") == "status" and st_prop.get("status"):
+                status_val = st_prop["status"].get("name", "Pending")
+            elif st_prop.get("type") == "multi_select" and st_prop.get("multi_select"):
+                status_val = st_prop["multi_select"][0].get("name", "Pending")
+
         desc_objs = props.get("Description", {}).get("rich_text", [])
         description = desc_objs[0].get("plain_text", "") if desc_objs else ""
 
@@ -768,6 +759,7 @@ def get_notion_upgrades(user: UserContext = Depends(get_current_user)):
             "title": title,
             "category": cat,
             "priority": pri,
+            "status": status_val,
             "description": description,
             "requested_by": requested_by,
             "date_added": page.get("created_time", "")[:10]
@@ -787,6 +779,7 @@ def create_notion_upgrade(req: CreateUpgradeRequest, user: UserContext = Depends
     title_property_key = "Title"
     cat_is_multi_select = False
     pri_is_multi_select = False
+    status_prop_type = "select"
     
     db_meta = requests.get(f"https://api.notion.com/v1/databases/{NOTION_UPGRADES_DATABASE_ID}", headers=get_notion_headers(), timeout=10)
     if db_meta.status_code == 200:
@@ -798,9 +791,18 @@ def create_notion_upgrade(req: CreateUpgradeRequest, user: UserContext = Depends
                 cat_is_multi_select = (prop_val.get("type") == "multi_select")
             if prop_name.lower() == "priority":
                 pri_is_multi_select = (prop_val.get("type") == "multi_select")
+            if prop_name.lower() == "status":
+                status_prop_type = prop_val.get("type", "select")
 
     cat_payload = {"multi_select": [{"name": req.category}]} if cat_is_multi_select else {"select": {"name": req.category}}
     pri_payload = {"multi_select": [{"name": req.priority}]} if pri_is_multi_select else {"select": {"name": req.priority}}
+    
+    if status_prop_type == "status":
+        status_payload = {"status": {"name": req.status}}
+    elif status_prop_type == "multi_select":
+        status_payload = {"multi_select": [{"name": req.status}]}
+    else:
+        status_payload = {"select": {"name": req.status}}
 
     payload = {
         "parent": {"database_id": NOTION_UPGRADES_DATABASE_ID},
@@ -808,6 +810,7 @@ def create_notion_upgrade(req: CreateUpgradeRequest, user: UserContext = Depends
             title_property_key: {"title": [{"text": {"content": req.title}}]},
             "Category": cat_payload,
             "Priority": pri_payload,
+            "Status": status_payload,
             "Description": {"rich_text": [{"text": {"content": req.description}}]},
             "Requested By": {"rich_text": [{"text": {"content": user.name or user.user_id}}]}
         }
@@ -818,3 +821,51 @@ def create_notion_upgrade(req: CreateUpgradeRequest, user: UserContext = Depends
         raise HTTPException(status_code=resp.status_code, detail=f"Failed to push upgrade to Notion: {resp.text}")
 
     return {"status": "success", "page_id": resp.json().get("id")}
+
+@app.patch("/api/v1/upgrades/{page_id}/status")
+def update_notion_upgrade_status(page_id: str, req: UpdateUpgradeStatusRequest, user: UserContext = Depends(get_current_user)):
+    if user.role != "SuperAdmin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Guests cannot mutate Notion databases.")
+    if not NOTION_API_KEY or not NOTION_UPGRADES_DATABASE_ID:
+        raise HTTPException(status_code=500, detail="Notion Upgrades DB unconfigured in .env.")
+
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    
+    db_meta = requests.get(f"https://api.notion.com/v1/databases/{NOTION_UPGRADES_DATABASE_ID}", headers=get_notion_headers(), timeout=10)
+    status_prop_type = "select"
+    if db_meta.status_code == 200:
+        db_props = db_meta.json().get("properties", {})
+        if "Status" in db_props:
+            status_prop_type = db_props["Status"].get("type", "select")
+
+    if status_prop_type == "status":
+        status_payload = {"status": {"name": req.status}}
+    elif status_prop_type == "multi_select":
+        status_payload = {"multi_select": [{"name": req.status}]}
+    else:
+        status_payload = {"select": {"name": req.status}}
+
+    payload = {
+        "properties": {
+            "Status": status_payload
+        }
+    }
+
+    resp = requests.patch(url, headers=get_notion_headers(), json=payload, timeout=10)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"Failed to update status in Notion: {resp.text}")
+    return {"status": "success", "page_id": page_id}
+
+@app.delete("/api/v1/upgrades/{page_id}")
+def delete_notion_upgrade(page_id: str, user: UserContext = Depends(get_current_user)):
+    if user.role != "SuperAdmin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Guests cannot mutate Notion databases.")
+    if not NOTION_API_KEY or not NOTION_UPGRADES_DATABASE_ID:
+        raise HTTPException(status_code=500, detail="Notion Upgrades DB unconfigured in .env.")
+
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    payload = {"archived": True}
+    resp = requests.patch(url, headers=get_notion_headers(), json=payload, timeout=10)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"Failed to delete page in Notion: {resp.text}")
+    return {"status": "success", "deleted_id": page_id}

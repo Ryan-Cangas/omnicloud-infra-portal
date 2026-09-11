@@ -1,5 +1,5 @@
 /**
- * OmniOps Sovereign Homelab Operations Center
+ * OmniCloud Sovereign Homelab Operations Center
  *
  * Architecture & Modules:
  * 1. Hypervisor Gateway: Multi-guest compute inspection with isolated noVNC WebSocket consoles.
@@ -7,7 +7,7 @@
  * 3. Service Catalog: Health-check matrix and latency probes across homelab containers and services.
  * 4. Security & Audit: Host intrusion events, SSH logins, and container status feeds.
  * 5. Maintenance Operations: Snapshot management, ZFS scrubs, and maintenance workflows.
- * 6. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks and Future Hardware Expansions.
+ * 6. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks and Future Hardware Expansions with Status toggle & deletion.
  * 7. Service Launchpad: Direct access to hosted web applications.
  */
 
@@ -47,7 +47,7 @@ import {
   Image as ImageIcon,
   Network,
   Globe,
-  Filter,
+  Trash2,
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
 
@@ -187,6 +187,7 @@ interface UpgradeItem {
   title: string;
   category: "Hardware" | "Software";
   priority: "High" | "Medium" | "Low";
+  status: "Pending" | "Completed";
   description: string;
   requested_by: string;
   date_added: string;
@@ -211,10 +212,6 @@ interface SecurityAuditLog {
   event: string;
   ip_address: string;
 }
-
-// ---------------------------------------------------------------------------
-// Native SVG Interactive Graph Components
-// ---------------------------------------------------------------------------
 
 function formatSpeed(kbps: number) {
   const mbps = (kbps * 8) / 1000;
@@ -506,6 +503,7 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
           fill="none"
           stroke="#818cf8"
           strokeWidth="2.2"
+          strokeLinecap="round"
           strokeDasharray="4 2"
           className="transition-all duration-500 ease-linear"
         />
@@ -618,10 +616,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main Dashboard Application
-// ---------------------------------------------------------------------------
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<
     | "overview"
@@ -645,7 +639,7 @@ export default function App() {
 
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  const [loginMfa, setLoginMfa] = useState(""); // MFA field for SuperAdmin
+  const [loginMfa, setLoginMfa] = useState("");
 
   const [resources, setResources] = useState<GuestResource[]>([]);
   const [telemetry, setTelemetry] = useState<NodeTelemetry | null>(null);
@@ -692,11 +686,11 @@ export default function App() {
     {
       name: "Nextcloud Workspace",
       category: "Productivity & Storage",
-      url: "https://ryan-ubuntu-home-server.exocomet-gamut.ts.net",
+      url: "https://nextcloud-lxc.exocomet-gamut.ts.net",
       port: 443,
       status: "Healthy",
       latency_ms: 12,
-      host_node: "100 (Ubuntu-VM)",
+      host_node: "107 (NextCloud-LXC)",
       uptime_pct: 99.89,
     },
     {
@@ -1060,6 +1054,7 @@ export default function App() {
           title: upgTitle.trim(),
           category: upgCategory,
           priority: upgPriority,
+          status: "Pending",
           description: upgDesc.trim(),
         }),
       });
@@ -1076,6 +1071,50 @@ export default function App() {
     } finally {
       setIsSubmittingUpgrade(false);
     }
+  };
+
+  const handleToggleUpgradeStatus = async (
+    id: string,
+    currentStatus: string,
+  ) => {
+    if (!authToken || currentUser?.role !== "SuperAdmin") return;
+    const nextStatus = currentStatus === "Completed" ? "Pending" : "Completed";
+    try {
+      const res = await fetch(
+        `http://localhost:8000/api/v1/upgrades/${id}/status`,
+        {
+          method: "PATCH",
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ status: nextStatus }),
+        },
+      );
+      if (res.ok) {
+        await fetchUpgrades();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || "Failed to update upgrade status");
+      }
+    } catch (err) {}
+  };
+
+  const handleDeleteUpgrade = async (id: string) => {
+    if (!authToken || currentUser?.role !== "SuperAdmin") return;
+    if (
+      !confirm("Are you sure you want to delete this upgrade item from Notion?")
+    )
+      return;
+    try {
+      const res = await fetch(`http://localhost:8000/api/v1/upgrades/${id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        await fetchUpgrades();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || "Failed to delete upgrade item");
+      }
+    } catch (err) {}
   };
 
   useEffect(() => {
@@ -1173,7 +1212,7 @@ export default function App() {
               <KeyRound className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white">OmniOps Homelab</h2>
+              <h2 className="text-lg font-bold text-white">OmniCloud Portal</h2>
               <p className="text-xs text-zinc-400">
                 Sovereign Control Plane Gateway
               </p>
@@ -1356,10 +1395,8 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto p-8 space-y-6">
-          {/* ================= OVERVIEW VIEW ================= */}
           {activeTab === "overview" && (
             <>
-              {/* Core Infrastructure Metrics Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
@@ -1421,7 +1458,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Workload Inventory Grid */}
               <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
                 <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
                   <div>
@@ -1506,11 +1542,6 @@ export default function App() {
                                 !canAccessConsole || vm.status !== "running"
                               }
                               className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-20 disabled:hover:bg-emerald-600 text-white font-medium rounded-lg text-xs inline-flex items-center gap-1.5 shadow-sm"
-                              title={
-                                !canAccessConsole
-                                  ? "Permission Denied (Requires Admin)"
-                                  : ""
-                              }
                             >
                               <Terminal className="w-3.5 h-3.5" /> Console
                             </button>
@@ -1550,7 +1581,6 @@ export default function App() {
                               <button
                                 disabled
                                 className="p-1.5 bg-zinc-800/40 text-zinc-600 rounded-lg border border-zinc-800"
-                                title="Power controls restricted to Admins"
                               >
                                 <Lock className="w-3.5 h-3.5" />
                               </button>
@@ -1565,7 +1595,7 @@ export default function App() {
             </>
           )}
 
-          {/* ================= TELEMETRY ANALYTICS WITH GRAPHS ================= */}
+          {/* ================= HOST BARE-METAL TELEMETRY ================= */}
           {activeTab === "analytics" && (
             <div className="space-y-6">
               <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -1819,7 +1849,6 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= WORKSPACES & PARTITIONS VIEW ================= */}
           {activeTab === "workspaces" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -1876,19 +1905,12 @@ export default function App() {
                         {ws.quota}
                       </p>
                     </div>
-                    <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-400">
-                      <span>{ws.vms} Workloads</span>
-                      <button className="text-indigo-400 hover:underline flex items-center gap-1">
-                        Configure <ExternalLink className="w-3 h-3" />
-                      </button>
-                    </div>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* ================= SERVICE CATALOG ================= */}
           {activeTab === "services" && (
             <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
               <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
@@ -1955,7 +1977,6 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= SECURITY & SIEM TELEMETRY ================= */}
           {activeTab === "security" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -1968,10 +1989,6 @@ export default function App() {
                     Live security events streamed from Wazuh HIDS and PAM
                     authentication monitors
                   </p>
-                </div>
-                <div className="flex items-center gap-2 bg-[#18181b] px-3 py-1.5 rounded-xl border border-zinc-800 text-xs font-mono text-zinc-400">
-                  <Filter className="w-3.5 h-3.5" /> Filter:{" "}
-                  <strong className="text-white">All Alerts</strong>
                 </div>
               </div>
 
@@ -2024,7 +2041,7 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= FUTURE UPGRADES & EXPANSION VIEW ================= */}
+          {/* ================= HARDWARE EXPANSION VIEW ================= */}
           {activeTab === "upgrades" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -2036,8 +2053,8 @@ export default function App() {
                     </span>
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Hardware expansion tracks and container memory capacity
-                    requests
+                    Hardware expansion tracks, status updates, and deletion
+                    workflows
                   </p>
                 </div>
 
@@ -2167,17 +2184,28 @@ export default function App() {
                     >
                       <div>
                         <div className="flex items-center justify-between mb-3">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              upg.priority === "High"
-                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                                : upg.priority === "Medium"
-                                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                                  : "bg-sky-500/10 text-sky-400 border border-sky-500/20"
-                            }`}
-                          >
-                            {upg.priority}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                upg.priority === "High"
+                                  ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                  : upg.priority === "Medium"
+                                    ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                    : "bg-sky-500/10 text-sky-400 border border-sky-500/20"
+                              }`}
+                            >
+                              {upg.priority}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                upg.status === "Completed"
+                                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                  : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                              }`}
+                            >
+                              {upg.status || "Pending"}
+                            </span>
+                          </div>
                           <span className="text-[10px] font-mono text-zinc-500 flex items-center gap-1 border border-zinc-800 bg-zinc-900 px-2 py-0.5 rounded">
                             {upg.category}
                           </span>
@@ -2189,25 +2217,35 @@ export default function App() {
                           {upg.description}
                         </p>
                       </div>
+
                       <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-500 font-mono">
                         <span>By: {upg.requested_by}</span>
-                        {currentUser.role === "SuperAdmin" ? (
-                          <a
-                            href={`https://notion.so/${upg.id.replace(/-/g, "")}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-indigo-400 hover:underline flex items-center gap-1"
-                          >
-                            View in Notion <ExternalLink className="w-3 h-3" />
-                          </a>
-                        ) : (
-                          <span
-                            className="text-zinc-600 flex items-center gap-1 cursor-not-allowed"
-                            title="External links disabled for guests"
-                          >
-                            Notion Link <Lock className="w-3 h-3" />
-                          </span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {currentUser.role === "SuperAdmin" && (
+                            <>
+                              <button
+                                onClick={() =>
+                                  handleToggleUpgradeStatus(
+                                    upg.id,
+                                    upg.status || "Pending",
+                                  )
+                                }
+                                className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-semibold"
+                              >
+                                {upg.status === "Completed"
+                                  ? "Set Pending"
+                                  : "Mark Done"}
+                              </button>
+                              <button
+                                onClick={() => handleDeleteUpgrade(upg.id)}
+                                className="p-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded"
+                                title="Delete upgrade"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -2216,7 +2254,6 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= MAINTENANCE & BACKUP OPS ================= */}
           {activeTab === "maintenance" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -2299,7 +2336,6 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= CALENDAR VIEW ================= */}
           {activeTab === "calendar" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -2342,18 +2378,12 @@ export default function App() {
                         </span>
                       </div>
                     </div>
-                    <div className="mt-6 pt-4 border-t border-zinc-800 flex justify-end">
-                      <button className="text-xs text-emerald-400 hover:underline">
-                        Download ICS Calendar Sync
-                      </button>
-                    </div>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* ================= NOTES RUNBOOK VAULT (NOTION 2-WAY SYNC) ================= */}
           {activeTab === "notes" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -2520,26 +2550,6 @@ export default function App() {
                           {note.snippet}
                         </p>
                       </div>
-                      <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-500 font-mono">
-                        <span>Author: {note.author}</span>
-                        {currentUser.role === "SuperAdmin" ? (
-                          <a
-                            href={`https://notion.so/${note.id.replace(/-/g, "")}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-emerald-400 hover:underline flex items-center gap-1"
-                          >
-                            Open in Notion <ExternalLink className="w-3 h-3" />
-                          </a>
-                        ) : (
-                          <span
-                            className="text-zinc-600 flex items-center gap-1 cursor-not-allowed"
-                            title="External links disabled for guests"
-                          >
-                            Notion Link <Lock className="w-3 h-3" />
-                          </span>
-                        )}
-                      </div>
                     </div>
                   ))}
                 </div>
@@ -2547,7 +2557,6 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= APPS VIEW ================= */}
           {activeTab === "apps" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -2587,17 +2596,6 @@ export default function App() {
                           {app.desc}
                         </p>
                       </div>
-                      <div className="mt-6 pt-4 border-t border-zinc-800 flex justify-end">
-                        <a
-                          href={app.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-xs text-indigo-400 hover:text-indigo-300 hover:underline flex items-center gap-1"
-                        >
-                          Launch Application{" "}
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
-                      </div>
                     </div>
                   );
                 })}
@@ -2607,7 +2605,6 @@ export default function App() {
         </main>
       </div>
 
-      {/* Embedded noVNC Terminal Modal */}
       {activeTerminal && authToken && (
         <VncTerminal
           node={activeTerminal.node}

@@ -7,7 +7,7 @@
  * 3. Service Catalog: Health-check matrix and latency probes across homelab containers and services.
  * 4. Security & Audit: Host intrusion events, SSH logins, and container status feeds.
  * 5. Maintenance Operations: Snapshot management, ZFS scrubs, and maintenance workflows.
- * 6. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks and Future Hardware Expansions with Status toggle & deletion.
+ * 6. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks, Future Hardware Expansions, and Maintenance Windows.
  * 7. Service Launchpad: Direct access to hosted web applications.
  */
 
@@ -165,12 +165,13 @@ interface MaintenanceTask {
 }
 
 interface CalendarEvent {
-  id: number;
+  id: string;
   title: string;
   type: "Maintenance" | "Security Audit" | "ZFS Scrub" | "Snapshot Backup";
   date: string;
   time: string;
   targetNode: string;
+  status: "Scheduled" | "Completed";
 }
 
 interface NoteItem {
@@ -503,7 +504,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
           fill="none"
           stroke="#818cf8"
           strokeWidth="2.2"
-          strokeLinecap="round"
           strokeDasharray="4 2"
           className="transition-all duration-500 ease-linear"
         />
@@ -797,32 +797,19 @@ export default function App() {
     },
   ]);
 
-  const [calendarEvents] = useState<CalendarEvent[]>([
-    {
-      id: 1,
-      title: "Corosync Node Heartbeat Calibration",
-      type: "Maintenance",
-      date: "Aug 29, 2026",
-      time: "02:00 - 03:00 UTC",
-      targetNode: "pve-server",
-    },
-    {
-      id: 2,
-      title: "ZFS Pool Scrubbing & Trim Procedure",
-      type: "ZFS Scrub",
-      date: "Sep 04, 2026",
-      time: "23:00 - 01:00 UTC",
-      targetNode: "pve-server",
-    },
-    {
-      id: 3,
-      title: "Network Isolation & WireGuard Key Rotation",
-      type: "Security Audit",
-      date: "Sep 18, 2026",
-      time: "09:00 - 16:00 UTC",
-      targetNode: "Tailscale Mesh",
-    },
-  ]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [isEventsLoading, setIsEventsLoading] = useState<boolean>(false);
+  const [isCreatingEvent, setIsCreatingEvent] = useState<boolean>(false);
+  const [evtTitle, setEvtTitle] = useState("");
+  const [evtType, setEvtType] = useState<
+    "Maintenance" | "Security Audit" | "ZFS Scrub" | "Snapshot Backup"
+  >("Maintenance");
+  const [evtDate, setEvtDate] = useState<string>(
+    new Date().toISOString().split("T")[0],
+  );
+  const [evtTime, setEvtTime] = useState("02:00 - 03:00 UTC");
+  const [evtTargetNode, setEvtTargetNode] = useState("pve-server");
+  const [isSubmittingEvent, setIsSubmittingEvent] = useState<boolean>(false);
 
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [selectedTag, setSelectedTag] = useState<string>("All");
@@ -1011,6 +998,23 @@ export default function App() {
     }
   };
 
+  const fetchCalendarEvents = async () => {
+    if (!authToken) return;
+    setIsEventsLoading(true);
+    try {
+      const res = await fetch(
+        "http://localhost:8000/api/v1/maintenance-events",
+        {
+          headers: getAuthHeaders(),
+        },
+      );
+      if (res.ok) setCalendarEvents(await res.json());
+    } catch (err) {
+    } finally {
+      setIsEventsLoading(false);
+    }
+  };
+
   const handleCreateNote = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim() || !authToken) return;
@@ -1117,6 +1121,89 @@ export default function App() {
     } catch (err) {}
   };
 
+  const handleCreateCalendarEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!evtTitle.trim() || !authToken) return;
+    setIsSubmittingEvent(true);
+    try {
+      const res = await fetch(
+        "http://localhost:8000/api/v1/maintenance-events",
+        {
+          method: "POST",
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: evtTitle.trim(),
+            type: evtType,
+            date: evtDate,
+            time: evtTime.trim(),
+            targetNode: evtTargetNode.trim(),
+            status: "Scheduled",
+          }),
+        },
+      );
+      if (res.ok) {
+        setEvtTitle("");
+        setEvtTime("02:00 - 03:00 UTC");
+        setEvtTargetNode("pve-server");
+        setIsCreatingEvent(false);
+        await fetchCalendarEvents();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || "Failed to schedule window in Notion");
+      }
+    } catch (err) {
+    } finally {
+      setIsSubmittingEvent(false);
+    }
+  };
+
+  const handleToggleEventStatus = async (id: string, currentStatus: string) => {
+    if (!authToken || currentUser?.role !== "SuperAdmin") return;
+    const nextStatus =
+      currentStatus === "Completed" ? "Scheduled" : "Completed";
+    try {
+      const res = await fetch(
+        `http://localhost:8000/api/v1/maintenance-events/${id}/status`,
+        {
+          method: "PATCH",
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ status: nextStatus }),
+        },
+      );
+      if (res.ok) {
+        await fetchCalendarEvents();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || "Failed to update maintenance event status");
+      }
+    } catch (err) {}
+  };
+
+  const handleDeleteCalendarEvent = async (id: string) => {
+    if (!authToken || currentUser?.role !== "SuperAdmin") return;
+    if (
+      !confirm(
+        "Are you sure you want to delete this maintenance window from Notion?",
+      )
+    )
+      return;
+    try {
+      const res = await fetch(
+        `http://localhost:8000/api/v1/maintenance-events/${id}`,
+        {
+          method: "DELETE",
+          headers: getAuthHeaders(),
+        },
+      );
+      if (res.ok) {
+        await fetchCalendarEvents();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || "Failed to delete maintenance event");
+      }
+    } catch (err) {}
+  };
+
   useEffect(() => {
     if (authToken && currentUser) {
       fetchResources();
@@ -1132,6 +1219,7 @@ export default function App() {
   useEffect(() => {
     if (authToken && activeTab === "notes") fetchNotes();
     if (authToken && activeTab === "upgrades") fetchUpgrades();
+    if (authToken && activeTab === "calendar") fetchCalendarEvents();
     if (authToken && activeTab === "analytics") fetchTelemetry();
   }, [authToken, activeTab]);
 
@@ -2336,51 +2424,236 @@ export default function App() {
             </div>
           )}
 
+          {/* ================= MAINTENANCE WINDOWS (CALENDAR TAB) ================= */}
           {activeTab === "calendar" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-sm font-bold text-white">
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
                     Scheduled Maintenance Windows
+                    <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-mono rounded-full">
+                      Notion 2-Way Sync
+                    </span>
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Target hypervisor maintenance and auditing windows
+                    Target hypervisor maintenance, security audits, and
+                    scrubbing procedures
                   </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={fetchCalendarEvents}
+                    disabled={isEventsLoading}
+                    className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white rounded-xl transition-colors"
+                  >
+                    <RotateCcw
+                      className={`w-3.5 h-3.5 ${isEventsLoading ? "animate-spin text-emerald-400" : ""}`}
+                    />
+                  </button>
+
+                  {currentUser.role === "SuperAdmin" && (
+                    <button
+                      onClick={() => setIsCreatingEvent(true)}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 shadow-sm"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Schedule Window
+                    </button>
+                  )}
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {filteredEvents.map((evt) => (
-                  <div
-                    key={evt.id}
-                    className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between"
+              {isCreatingEvent && currentUser.role === "SuperAdmin" && (
+                <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
+                    Schedule Maintenance Window (Pushes to Notion)
+                  </h3>
+                  <form
+                    onSubmit={handleCreateCalendarEvent}
+                    className="space-y-4"
                   >
-                    <div>
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="px-2.5 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-semibold rounded-full">
-                          {evt.type}
-                        </span>
-                        <span className="text-xs font-mono text-zinc-500">
-                          {evt.targetNode}
-                        </span>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="lg:col-span-2">
+                        <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                          Operation Title
+                        </label>
+                        <input
+                          type="text"
+                          value={evtTitle}
+                          onChange={(e) => setEvtTitle(e.target.value)}
+                          placeholder="e.g., Corosync Heartbeat Calibration"
+                          className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500"
+                          required
+                        />
                       </div>
-                      <h3 className="text-sm font-bold text-white mb-2">
-                        {evt.title}
-                      </h3>
-                      <div className="flex items-center gap-4 text-xs font-mono text-zinc-400">
-                        <span className="flex items-center gap-1">
-                          <CalendarDays className="w-3.5 h-3.5 text-zinc-500" />{" "}
-                          {evt.date}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3.5 h-3.5 text-zinc-500" />{" "}
-                          {evt.time}
-                        </span>
+                      <div>
+                        <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                          Type
+                        </label>
+                        <select
+                          value={evtType}
+                          onChange={(e) => setEvtType(e.target.value as any)}
+                          className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500"
+                        >
+                          <option value="Maintenance">Maintenance</option>
+                          <option value="Security Audit">Security Audit</option>
+                          <option value="ZFS Scrub">ZFS Scrub</option>
+                          <option value="Snapshot Backup">
+                            Snapshot Backup
+                          </option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                          Execution Date
+                        </label>
+                        <input
+                          type="date"
+                          value={evtDate}
+                          onChange={(e) => setEvtDate(e.target.value)}
+                          className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500 [color-scheme:dark]"
+                          required
+                        />
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                          Time Window
+                        </label>
+                        <input
+                          type="text"
+                          value={evtTime}
+                          onChange={(e) => setEvtTime(e.target.value)}
+                          placeholder="e.g., 02:00 - 03:00 UTC"
+                          className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-mono text-zinc-400 mb-1">
+                          Target Node / Infrastructure
+                        </label>
+                        <input
+                          type="text"
+                          value={evtTargetNode}
+                          onChange={(e) => setEvtTargetNode(e.target.value)}
+                          placeholder="e.g., pve-server, Tailscale Mesh"
+                          className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsCreatingEvent(false)}
+                        className="px-3 py-1.5 bg-zinc-800 text-zinc-400 hover:text-white rounded-xl text-xs font-semibold"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSubmittingEvent}
+                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold"
+                      >
+                        {isSubmittingEvent ? "Saving..." : "Create in Notion"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {filteredEvents.length === 0 ? (
+                <div className="p-12 text-center text-xs text-zinc-500 font-mono bg-[#151518] border border-zinc-800 rounded-2xl">
+                  {isEventsLoading
+                    ? "Polling maintenance schedules from Notion..."
+                    : "No maintenance windows scheduled."}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {filteredEvents.map((evt) => (
+                    <div
+                      key={evt.id}
+                      className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-semibold rounded-full">
+                              {evt.type}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                evt.status === "Completed"
+                                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                  : "bg-sky-500/10 text-sky-400 border border-sky-500/20"
+                              }`}
+                            >
+                              {evt.status || "Scheduled"}
+                            </span>
+                          </div>
+                          <span className="text-xs font-mono text-zinc-500">
+                            {evt.targetNode}
+                          </span>
+                        </div>
+                        <h3 className="text-sm font-bold text-white mb-2">
+                          {evt.title}
+                        </h3>
+                        <div className="flex items-center gap-4 text-xs font-mono text-zinc-400">
+                          <span className="flex items-center gap-1">
+                            <CalendarDays className="w-3.5 h-3.5 text-zinc-500" />{" "}
+                            {evt.date}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5 text-zinc-500" />{" "}
+                            {evt.time}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between">
+                        <span className="text-[11px] font-mono text-zinc-500">
+                          Target:{" "}
+                          <strong className="text-zinc-300">
+                            {evt.targetNode}
+                          </strong>
+                        </span>
+                        <div className="flex items-center gap-2">
+                          {currentUser.role === "SuperAdmin" && (
+                            <>
+                              <button
+                                onClick={() =>
+                                  handleToggleEventStatus(
+                                    evt.id,
+                                    evt.status || "Scheduled",
+                                  )
+                                }
+                                className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-semibold transition-colors"
+                              >
+                                {evt.status === "Completed"
+                                  ? "Re-open"
+                                  : "Mark Done"}
+                              </button>
+                              <button
+                                onClick={() =>
+                                  handleDeleteCalendarEvent(evt.id)
+                                }
+                                className="p-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded transition-colors"
+                                title="Delete maintenance window"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

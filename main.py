@@ -8,7 +8,7 @@ Architecture & Responsibilities:
 4. Ephemeral Single-Use WebSocket Tokens: Issues 30-second scoped console tokens for out-of-band noVNC access.
 5. Bidirectional RFB WebSocket Reverse Proxy: Bridges client RFB streams to Proxmox's internal vncwebsocket daemon.
 6. Bare-Metal Telemetry & Time-Series: Metrics engine for CPU, RAM, NVMe/HDD, network RX/TX, and uptime.
-7. Notion Two-Way Sync: Native synchronization for Homelab Runbooks and Hardware Expansions with Status & Deletion support.
+7. Notion Two-Way Sync: Native synchronization for Homelab Runbooks, Hardware Expansions, and Maintenance Windows.
 8. MFA Integration: Enforces TOTP (Microsoft Authenticator) for SuperAdmin logins.
 """
 
@@ -29,7 +29,7 @@ import bcrypt
 import requests
 import urllib3
 import websockets
-import pyotp  # Added for Microsoft Authenticator MFA
+import pyotp
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -56,9 +56,9 @@ JWT_CONSOLE_TOKEN_EXPIRE_SECONDS = 30
 NOTION_API_KEY = os.getenv("NOTION_API_KEY", "")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "")
 NOTION_UPGRADES_DATABASE_ID = os.getenv("NOTION_UPGRADES_DATABASE_ID", "")
+NOTION_MAINTENANCE_DATABASE_ID = os.getenv("NOTION_MAINTENANCE_DATABASE_ID", "")
 NOTION_VERSION = "2022-06-28"
 
-# MFA Configuration
 ADMIN_MFA_SECRET = os.getenv("ADMIN_MFA_SECRET")
 if not ADMIN_MFA_SECRET:
     raise RuntimeError("CRITICAL: ADMIN_MFA_SECRET environment variable is missing.")
@@ -104,7 +104,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 DEFAULT_DEV_HASH = hash_password("password123")
 
-# Simplified Homelab Personas
 USERS_DB = {
     "admin-01": {
         "user_id": "admin-01",
@@ -154,12 +153,23 @@ class CreateUpgradeRequest(BaseModel):
 class UpdateUpgradeStatusRequest(BaseModel):
     status: str
 
+class CreateMaintenanceEventRequest(BaseModel):
+    title: str
+    type: str
+    date: str
+    time: str
+    targetNode: str
+    status: Optional[str] = "Scheduled"
+
+class UpdateMaintenanceStatusRequest(BaseModel):
+    status: str
+
 security_scheme = HTTPBearer(auto_error=False)
 
 def create_jwt_token(payload_data: dict, expires_delta: timedelta) -> str:
     payload = payload_data.copy()
-    expire = datetime.now(timezone.utc) + expires_delta
-    payload.update({"exp": expire, "iat": datetime.now(timezone.utc)})
+    expire = datetime.now(timezone.gst) + expires_delta
+    payload.update({"exp": expire, "iat": datetime.now(timezone.gst)})
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme)) -> UserContext:
@@ -520,7 +530,7 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
                 "kernel_version": node_status.get("kversion", "Linux"),
                 "uptime_seconds": uptime_secs,
                 "uptime_formatted": format_uptime(uptime_secs),
-                "boot_time": datetime.fromtimestamp(datetime.now().timestamp() - uptime_secs).strftime("%b %d, %Y %H:%M UTC") if uptime_secs else "N/A"
+                "boot_time": datetime.fromtimestamp(datetime.now().timestamp() - uptime_secs).strftime("%b %d, %Y %H:%M GST") if uptime_secs else "N/A"
             },
             "history": list(TELEMETRY_STREAM_BUFFER)
         }
@@ -618,6 +628,10 @@ def get_notion_headers():
         "Content-Type": "application/json",
     }
 
+# ---------------------------------------------------------------------------
+# Notion API: Runbooks
+# ---------------------------------------------------------------------------
+
 @app.get("/api/v1/notes")
 def get_notion_notes(user: UserContext = Depends(get_current_user)):
     if not NOTION_API_KEY or not NOTION_DATABASE_ID:
@@ -703,6 +717,10 @@ def create_notion_note(req: CreateNoteRequest, user: UserContext = Depends(get_c
         raise HTTPException(status_code=resp.status_code, detail=f"Failed to create note in Notion: {resp.text}")
 
     return {"status": "success", "page_id": resp.json().get("id")}
+
+# ---------------------------------------------------------------------------
+# Notion API: Hardware Expansions
+# ---------------------------------------------------------------------------
 
 @app.get("/api/v1/upgrades")
 def get_notion_upgrades(user: UserContext = Depends(get_current_user)):
@@ -868,4 +886,138 @@ def delete_notion_upgrade(page_id: str, user: UserContext = Depends(get_current_
     resp = requests.patch(url, headers=get_notion_headers(), json=payload, timeout=10)
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=f"Failed to delete page in Notion: {resp.text}")
+    return {"status": "success", "deleted_id": page_id}
+
+# ---------------------------------------------------------------------------
+# Notion API: Maintenance Windows
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/maintenance-events")
+def get_notion_maintenance_events(user: UserContext = Depends(get_current_user)):
+    if not NOTION_API_KEY or not NOTION_MAINTENANCE_DATABASE_ID:
+        return [
+            {
+                "id": "mock-1",
+                "title": "Corosync Node Heartbeat Calibration",
+                "type": "Maintenance",
+                "date": "2026-08-29",
+                "time": "02:00 - 03:00 GST",
+                "targetNode": "pve-server",
+                "status": "Completed"
+            },
+            {
+                "id": "mock-2",
+                "title": "ZFS Pool Scrubbing & Trim Procedure",
+                "type": "ZFS Scrub",
+                "date": "2026-09-04",
+                "time": "23:00 - 01:00 GST",
+                "targetNode": "pve-server",
+                "status": "Scheduled"
+            },
+            {
+                "id": "mock-3",
+                "title": "Network Isolation & WireGuard Key Rotation",
+                "type": "Security Audit",
+                "date": "2026-09-18",
+                "time": "09:00 - 16:00 GST",
+                "targetNode": "Tailscale Mesh",
+                "status": "Scheduled"
+            }
+        ]
+
+    url = f"https://api.notion.com/v1/databases/{NOTION_MAINTENANCE_DATABASE_ID}/query"
+    resp = requests.post(url, headers=get_notion_headers(), json={}, timeout=10)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"Notion sync error: {resp.text}")
+
+    results = resp.json().get("results", [])
+    events = []
+    for page in results:
+        props = page.get("properties", {})
+        title_objs = props.get("Title", {}).get("title", []) or props.get("Name", {}).get("title", [])
+        title = title_objs[0].get("plain_text", "Maintenance Event") if title_objs else "Maintenance Event"
+
+        m_type = "Maintenance"
+        if "select" in props.get("Type", {}):
+            m_type = props["Type"]["select"].get("name", "Maintenance") if props["Type"]["select"] else "Maintenance"
+
+        date_obj = props.get("Date", {}).get("date")
+        evt_date = date_obj.get("start") if date_obj else page.get("created_time", "")[:10]
+
+        time_objs = props.get("Time Window", {}).get("rich_text", [])
+        evt_time = time_objs[0].get("plain_text", "04:00 - 05:00 GST") if time_objs else "04:00 - 05:00 GST"
+
+        node_objs = props.get("Target Node", {}).get("rich_text", [])
+        target_node = node_objs[0].get("plain_text", "pve-server") if node_objs else "pve-server"
+
+        m_status = "Scheduled"
+        if "select" in props.get("Status", {}):
+            m_status = props["Status"]["select"].get("name", "Scheduled") if props["Status"]["select"] else "Scheduled"
+
+        events.append({
+            "id": page.get("id"),
+            "title": title,
+            "type": m_type,
+            "date": evt_date,
+            "time": evt_time,
+            "targetNode": target_node,
+            "status": m_status
+        })
+
+    return events
+
+@app.post("/api/v1/maintenance-events")
+def create_notion_maintenance_event(req: CreateMaintenanceEventRequest, user: UserContext = Depends(get_current_user)):
+    if user.role != "SuperAdmin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Guests cannot mutate Notion databases.")
+    if not NOTION_API_KEY or not NOTION_MAINTENANCE_DATABASE_ID:
+        raise HTTPException(status_code=500, detail="Notion Maintenance DB unconfigured in .env.")
+
+    url = "https://api.notion.com/v1/pages"
+    payload = {
+        "parent": {"database_id": NOTION_MAINTENANCE_DATABASE_ID},
+        "properties": {
+            "Title": {"title": [{"text": {"content": req.title}}]},
+            "Type": {"select": {"name": req.type}},
+            "Date": {"date": {"start": req.date}},
+            "Time Window": {"rich_text": [{"text": {"content": req.time}}]},
+            "Target Node": {"rich_text": [{"text": {"content": req.targetNode}}]},
+            "Status": {"select": {"name": req.status or "Scheduled"}}
+        }
+    }
+    resp = requests.post(url, headers=get_notion_headers(), json=payload, timeout=10)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"Failed to create maintenance event in Notion: {resp.text}")
+    return {"status": "success", "page_id": resp.json().get("id")}
+
+@app.patch("/api/v1/maintenance-events/{page_id}/status")
+def update_notion_maintenance_status(page_id: str, req: UpdateMaintenanceStatusRequest, user: UserContext = Depends(get_current_user)):
+    if user.role != "SuperAdmin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Guests cannot mutate Notion databases.")
+    if not NOTION_API_KEY or not NOTION_MAINTENANCE_DATABASE_ID:
+        raise HTTPException(status_code=500, detail="Notion Maintenance DB unconfigured in .env.")
+
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    payload = {
+        "properties": {
+            "Status": {"select": {"name": req.status}}
+        }
+    }
+    resp = requests.patch(url, headers=get_notion_headers(), json=payload, timeout=10)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"Failed to update maintenance event status: {resp.text}")
+    return {"status": "success", "page_id": page_id}
+
+@app.delete("/api/v1/maintenance-events/{page_id}")
+def delete_notion_maintenance_event(page_id: str, user: UserContext = Depends(get_current_user)):
+    if user.role != "SuperAdmin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Guests cannot mutate Notion databases.")
+    if not NOTION_API_KEY or not NOTION_MAINTENANCE_DATABASE_ID:
+        raise HTTPException(status_code=500, detail="Notion Maintenance DB unconfigured in .env.")
+
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    payload = {"archived": True}
+    resp = requests.patch(url, headers=get_notion_headers(), json=payload, timeout=10)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"Failed to delete maintenance event from Notion: {resp.text}")
     return {"status": "success", "deleted_id": page_id}

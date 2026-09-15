@@ -6,7 +6,7 @@
  * 2. Bare-Metal Telemetry: Real-time SVG time-series graphs for CPU, RAM, NVMe/HDD storage, and Network I/O.
  * 3. Service Catalog: Health-check matrix and latency probes across homelab containers and services.
  * 4. Security & Audit: Host intrusion events, SSH logins, and container status feeds.
- * 5. Maintenance Operations: Snapshot management, ZFS scrubs, and maintenance workflows.
+ * 5. Scheduled Maintenance: Notion-backed interactive maintenance windows, audits, and tasks.
  * 6. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks, Future Hardware Expansions, and Maintenance Windows.
  * 7. Service Launchpad: Direct access to hosted web applications.
  */
@@ -20,7 +20,6 @@ import {
   ShieldCheck,
   Calendar as CalendarIcon,
   StickyNote,
-  Wrench,
   Grid,
   Terminal,
   Play,
@@ -152,16 +151,6 @@ interface NodeTelemetry {
     boot_time: string;
   };
   history: TelemetrySample[];
-}
-
-interface MaintenanceTask {
-  id: number;
-  title: string;
-  category: "Storage" | "Hypervisor" | "Security" | "Backup";
-  status: "Pending" | "In Progress" | "Completed";
-  priority: "High" | "Medium" | "Low";
-  scheduled: string;
-  target: string;
 }
 
 interface CalendarEvent {
@@ -665,7 +654,6 @@ export default function App() {
     | "services"
     | "security"
     | "upgrades"
-    | "maintenance"
     | "calendar"
     | "notes"
     | "apps"
@@ -796,45 +784,6 @@ export default function App() {
       source: "Wazuh-HIDS",
       event: "Root privilege escalation detected in 100 (Ubuntu-VM) by ryan",
       ip_address: "100.64.0.12",
-    },
-  ]);
-
-  const [maintenanceTasks, setMaintenanceTasks] = useState<MaintenanceTask[]>([
-    {
-      id: 1,
-      title: "ZFS Storage Pool scrub and silent corruption trim",
-      category: "Storage",
-      status: "Completed",
-      priority: "High",
-      scheduled: "Aug 28",
-      target: "local-lvm",
-    },
-    {
-      id: 2,
-      title: "Proxmox Linux kernel microcode patch (pve-manager 8.x)",
-      category: "Hypervisor",
-      status: "In Progress",
-      priority: "High",
-      scheduled: "Aug 30",
-      target: "pve-server",
-    },
-    {
-      id: 3,
-      title: "Proxmox Backup Server (PBS) snapshot pruning & deduplication",
-      category: "Backup",
-      status: "Pending",
-      priority: "Medium",
-      scheduled: "Sep 12",
-      target: "PBS-Target",
-    },
-    {
-      id: 4,
-      title: "Rotate Tailscale authorization keys and renew TLS certificates",
-      category: "Security",
-      status: "In Progress",
-      priority: "High",
-      scheduled: "Oct 05",
-      target: "Cluster-Wide",
     },
   ]);
 
@@ -1291,23 +1240,6 @@ export default function App() {
     }
   };
 
-  const toggleMaintenanceStatus = (id: number) => {
-    setMaintenanceTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === id) {
-          const nextStatus =
-            t.status === "Pending"
-              ? "In Progress"
-              : t.status === "In Progress"
-                ? "Completed"
-                : "Pending";
-          return { ...t, status: nextStatus };
-        }
-        return t;
-      }),
-    );
-  };
-
   const formatIp = (ip: string) => {
     if (currentUser?.role === "SuperAdmin") return ip;
     if (ip === "Localhost") return ip;
@@ -1326,7 +1258,6 @@ export default function App() {
     { id: "services", label: "Service Catalog", icon: Globe },
     { id: "security", label: "Security & SIEM", icon: ShieldCheck },
     { id: "upgrades", label: "Hardware Expansion", icon: Zap },
-    { id: "maintenance", label: "Operations & Backups", icon: Wrench },
     { id: "calendar", label: "Maintenance Windows", icon: CalendarIcon },
     { id: "notes", label: "Runbooks & SOPs", icon: StickyNote },
     { id: "apps", label: "Services Launchpad", icon: Grid },
@@ -1428,7 +1359,6 @@ export default function App() {
     );
   }
 
-  const filteredTasks = maintenanceTasks;
   const filteredEvents = calendarEvents;
   const filteredNotes =
     selectedTag === "All" ? notes : notes.filter((n) => n.tag === selectedTag);
@@ -1508,11 +1438,9 @@ export default function App() {
                   ? "Service Catalog & Health Matrix"
                   : activeTab === "security"
                     ? "Security Telemetry & Audit Logs"
-                    : activeTab === "maintenance"
-                      ? "Maintenance & Backup Operations"
-                      : activeTab === "analytics"
-                        ? "Host Bare-Metal Telemetry"
-                        : activeTab}
+                    : activeTab === "analytics"
+                      ? "Host Bare-Metal Telemetry"
+                      : activeTab}
             </h1>
           </div>
           <div className="flex items-center gap-4">
@@ -2383,89 +2311,7 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === "maintenance" && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-bold text-white">
-                    Maintenance Operations & Backup Schedules
-                  </h2>
-                  <p className="text-xs text-zinc-400">
-                    Scheduled ZFS scrubs, hypervisor patch procedures, and PBS
-                    backup retention
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
-                <table className="w-full text-left text-xs text-zinc-300">
-                  <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
-                    <tr>
-                      <th className="px-6 py-3">Operation Details</th>
-                      <th className="px-6 py-3">Category</th>
-                      <th className="px-6 py-3">Priority</th>
-                      <th className="px-6 py-3">Target Workload</th>
-                      <th className="px-6 py-3">Execution Date</th>
-                      <th className="px-6 py-3 text-right">Job Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-800/60">
-                    {filteredTasks.map((task) => (
-                      <tr
-                        key={task.id}
-                        className="hover:bg-zinc-800/20 transition-colors"
-                      >
-                        <td className="px-6 py-4 font-medium text-white flex items-center gap-2">
-                          <Wrench className="w-4 h-4 text-zinc-500 shrink-0" />{" "}
-                          {task.title}
-                        </td>
-                        <td className="px-6 py-4 capitalize font-mono text-zinc-400">
-                          {task.category}
-                        </td>
-                        <td className="px-6 py-4">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                              task.priority === "High"
-                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                                : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                            }`}
-                          >
-                            {task.priority}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 font-mono text-zinc-300">
-                          {task.target}
-                        </td>
-                        <td className="px-6 py-4 font-mono text-zinc-400">
-                          {task.scheduled}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <button
-                            onClick={() => {
-                              if (currentUser.role === "SuperAdmin")
-                                toggleMaintenanceStatus(task.id);
-                            }}
-                            className={`px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-all ${
-                              task.status === "Completed"
-                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                                : task.status === "In Progress"
-                                  ? "bg-sky-500/10 text-sky-400 border-sky-500/20"
-                                  : "bg-zinc-800/60 text-zinc-400 border-zinc-700"
-                            } ${currentUser.role === "SuperAdmin" ? "cursor-pointer" : "cursor-default"}`}
-                          >
-                            {task.status}{" "}
-                            {currentUser.role === "SuperAdmin" && "↻"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* ================= MAINTENANCE WINDOWS (CALENDAR TAB) ================= */}
+          {/* ================= MAINTENANCE WINDOWS (NOTION BACKED) ================= */}
           {activeTab === "calendar" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -2698,6 +2544,7 @@ export default function App() {
             </div>
           )}
 
+          {/* ================= RUNBOOKS & SOPS ================= */}
           {activeTab === "notes" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">

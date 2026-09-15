@@ -168,8 +168,8 @@ security_scheme = HTTPBearer(auto_error=False)
 
 def create_jwt_token(payload_data: dict, expires_delta: timedelta) -> str:
     payload = payload_data.copy()
-    expire = datetime.now(timezone.gst) + expires_delta
-    payload.update({"exp": expire, "iat": datetime.now(timezone.gst)})
+    expire = datetime.now(timezone.utc) + expires_delta
+    payload.update({"exp": expire, "iat": datetime.now(timezone.utc)})
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme)) -> UserContext:

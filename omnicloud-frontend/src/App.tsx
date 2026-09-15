@@ -323,57 +323,78 @@ function TelemetryAreaChart({
           />
         ))}
 
-        {hoveredIdx !== null && points[hoveredIdx] && (
-          <g className="pointer-events-none transition-all duration-75">
-            <line
-              x1={points[hoveredIdx].x}
-              y1={padding}
-              x2={points[hoveredIdx].x}
-              y2={height - padding}
-              stroke="#71717a"
-              strokeDasharray="3 3"
-            />
-            <rect
-              x={Math.max(0, Math.min(points[hoveredIdx].x - 35, width - 70))}
-              y={0}
-              width={70}
-              height={34}
-              fill="#18181b"
-              rx="6"
-              stroke="#3f3f46"
-            />
-            <text
-              x={Math.max(35, Math.min(points[hoveredIdx].x, width - 35))}
-              y={13}
-              fill="#a1a1aa"
-              fontSize="9"
-              fontFamily="monospace"
-              textAnchor="middle"
-            >
-              {points[hoveredIdx].time}
-            </text>
-            <text
-              x={Math.max(35, Math.min(points[hoveredIdx].x, width - 35))}
-              y={26}
-              fill={color}
-              fontSize="11"
-              fontFamily="monospace"
-              textAnchor="middle"
-              fontWeight="bold"
-            >
-              {points[hoveredIdx].val.toFixed(1)}
-              {unit}
-            </text>
-            <circle
-              cx={points[hoveredIdx].x}
-              cy={points[hoveredIdx].y}
-              r="4.5"
-              fill="#ffffff"
-              stroke={color}
-              strokeWidth="2"
-            />
-          </g>
-        )}
+        {hoveredIdx !== null &&
+          points[hoveredIdx] &&
+          (() => {
+            const boxWidth = 74;
+            const boxHeight = 36;
+            const activeX = points[hoveredIdx].x;
+            const activeY = points[hoveredIdx].y;
+
+            const tooltipX =
+              activeX + boxWidth + 12 > width - padding
+                ? activeX - boxWidth - 10
+                : activeX + 10;
+
+            const tooltipY =
+              activeY - boxHeight - 8 > padding
+                ? activeY - boxHeight - 8
+                : Math.min(activeY + 12, height - padding - boxHeight);
+
+            return (
+              <g className="pointer-events-none transition-all duration-75">
+                <line
+                  x1={activeX}
+                  y1={padding}
+                  x2={activeX}
+                  y2={height - padding}
+                  stroke="#71717a"
+                  strokeDasharray="3 3"
+                />
+                <rect
+                  x={tooltipX}
+                  y={tooltipY}
+                  width={boxWidth}
+                  height={boxHeight}
+                  fill="#141417"
+                  rx="6"
+                  stroke="#27272a"
+                  strokeWidth="1.2"
+                  className="shadow-xl"
+                />
+                <text
+                  x={tooltipX + boxWidth / 2}
+                  y={tooltipY + 14}
+                  fill="#a1a1aa"
+                  fontSize="9"
+                  fontFamily="monospace"
+                  textAnchor="middle"
+                >
+                  {points[hoveredIdx].time}
+                </text>
+                <text
+                  x={tooltipX + boxWidth / 2}
+                  y={tooltipY + 28}
+                  fill={color}
+                  fontSize="11"
+                  fontFamily="monospace"
+                  textAnchor="middle"
+                  fontWeight="bold"
+                >
+                  {points[hoveredIdx].val.toFixed(1)}
+                  {unit}
+                </text>
+                <circle
+                  cx={activeX}
+                  cy={activeY}
+                  r="4.5"
+                  fill="#ffffff"
+                  stroke={color}
+                  strokeWidth="2.5"
+                />
+              </g>
+            );
+          })()}
 
         {points.length > 0 && hoveredIdx === null && (
           <>
@@ -504,6 +525,7 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
           fill="none"
           stroke="#818cf8"
           strokeWidth="2.2"
+          strokeLinecap="round"
           strokeDasharray="4 2"
           className="transition-all duration-500 ease-linear"
         />
@@ -523,78 +545,97 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
 
         {hoveredIdx !== null &&
           rxPoints[hoveredIdx] &&
-          txPoints[hoveredIdx] && (
-            <g className="pointer-events-none transition-all duration-75">
-              <line
-                x1={rxPoints[hoveredIdx].x}
-                y1={padding}
-                x2={rxPoints[hoveredIdx].x}
-                y2={height - padding}
-                stroke="#71717a"
-                strokeDasharray="3 3"
-              />
-              <rect
-                x={Math.max(
-                  0,
-                  Math.min(rxPoints[hoveredIdx].x - 55, width - 110),
-                )}
-                y={0}
-                width={110}
-                height={46}
-                fill="#18181b"
-                rx="6"
-                stroke="#3f3f46"
-              />
-              <text
-                x={Math.max(55, Math.min(rxPoints[hoveredIdx].x, width - 55))}
-                y={12}
-                fill="#a1a1aa"
-                fontSize="9"
-                fontFamily="monospace"
-                textAnchor="middle"
-              >
-                {rxPoints[hoveredIdx].time}
-              </text>
-              <text
-                x={Math.max(55, Math.min(rxPoints[hoveredIdx].x, width - 55))}
-                y={25}
-                fill="#10b981"
-                fontSize="10"
-                fontFamily="monospace"
-                textAnchor="middle"
-                fontWeight="bold"
-              >
-                RX: {formatSpeed(rxPoints[hoveredIdx].val)}
-              </text>
-              <text
-                x={Math.max(55, Math.min(txPoints[hoveredIdx].x, width - 55))}
-                y={38}
-                fill="#818cf8"
-                fontSize="10"
-                fontFamily="monospace"
-                textAnchor="middle"
-                fontWeight="bold"
-              >
-                TX: {formatSpeed(txPoints[hoveredIdx].val)}
-              </text>
-              <circle
-                cx={rxPoints[hoveredIdx].x}
-                cy={rxPoints[hoveredIdx].y}
-                r="3.5"
-                fill="#ffffff"
-                stroke="#10b981"
-                strokeWidth="2"
-              />
-              <circle
-                cx={txPoints[hoveredIdx].x}
-                cy={txPoints[hoveredIdx].y}
-                r="3.5"
-                fill="#ffffff"
-                stroke="#818cf8"
-                strokeWidth="2"
-              />
-            </g>
-          )}
+          txPoints[hoveredIdx] &&
+          (() => {
+            const boxWidth = 114;
+            const boxHeight = 48;
+            const activeX = rxPoints[hoveredIdx].x;
+            const highestPeakY = Math.min(
+              rxPoints[hoveredIdx].y,
+              txPoints[hoveredIdx].y,
+            );
+
+            const leftSpace = activeX - padding;
+            const placeOnLeft = leftSpace > boxWidth + 15;
+            const tooltipX = placeOnLeft
+              ? activeX - boxWidth - 12
+              : activeX + 12;
+
+            const tooltipY =
+              highestPeakY - boxHeight - 8 > padding
+                ? highestPeakY - boxHeight - 8
+                : Math.min(highestPeakY + 14, height - padding - boxHeight);
+
+            return (
+              <g className="pointer-events-none transition-all duration-75">
+                <line
+                  x1={activeX}
+                  y1={padding}
+                  x2={activeX}
+                  y2={height - padding}
+                  stroke="#71717a"
+                  strokeDasharray="3 3"
+                />
+                <rect
+                  x={tooltipX}
+                  y={tooltipY}
+                  width={boxWidth}
+                  height={boxHeight}
+                  fill="#141417"
+                  rx="8"
+                  stroke="#27272a"
+                  strokeWidth="1.2"
+                  className="shadow-xl"
+                />
+                <text
+                  x={tooltipX + boxWidth / 2}
+                  y={tooltipY + 13}
+                  fill="#a1a1aa"
+                  fontSize="9"
+                  fontFamily="monospace"
+                  textAnchor="middle"
+                >
+                  {rxPoints[hoveredIdx].time}
+                </text>
+                <text
+                  x={tooltipX + 10}
+                  y={tooltipY + 27}
+                  fill="#10b981"
+                  fontSize="10"
+                  fontFamily="monospace"
+                  fontWeight="bold"
+                >
+                  RX: {formatSpeed(rxPoints[hoveredIdx].val)}
+                </text>
+                <text
+                  x={tooltipX + 10}
+                  y={tooltipY + 40}
+                  fill="#818cf8"
+                  fontSize="10"
+                  fontFamily="monospace"
+                  fontWeight="bold"
+                >
+                  TX: {formatSpeed(txPoints[hoveredIdx].val)}
+                </text>
+                <circle
+                  cx={rxPoints[hoveredIdx].x}
+                  cy={rxPoints[hoveredIdx].y}
+                  r="4"
+                  fill="#ffffff"
+                  stroke="#10b981"
+                  strokeWidth="2.5"
+                />
+                <circle
+                  cx={txPoints[hoveredIdx].x}
+                  cy={txPoints[hoveredIdx].y}
+                  r="4"
+                  fill="#ffffff"
+                  stroke="#818cf8"
+                  strokeWidth="2.5"
+                />
+              </g>
+            );
+          })()}
       </svg>
 
       <div className="flex justify-between items-center text-[10px] font-mono text-zinc-500 mt-1 px-2">
@@ -807,7 +848,7 @@ export default function App() {
   const [evtDate, setEvtDate] = useState<string>(
     new Date().toISOString().split("T")[0],
   );
-  const [evtTime, setEvtTime] = useState("02:00 - 03:00 UTC");
+  const [evtTime, setEvtTime] = useState("02:00 - 03:00 GST");
   const [evtTargetNode, setEvtTargetNode] = useState("pve-server");
   const [isSubmittingEvent, setIsSubmittingEvent] = useState<boolean>(false);
 
@@ -1143,7 +1184,7 @@ export default function App() {
       );
       if (res.ok) {
         setEvtTitle("");
-        setEvtTime("02:00 - 03:00 UTC");
+        setEvtTime("02:00 - 03:00 GST");
         setEvtTargetNode("pve-server");
         setIsCreatingEvent(false);
         await fetchCalendarEvents();
@@ -2526,7 +2567,7 @@ export default function App() {
                           type="text"
                           value={evtTime}
                           onChange={(e) => setEvtTime(e.target.value)}
-                          placeholder="e.g., 02:00 - 03:00 UTC"
+                          placeholder="e.g., 02:00 - 03:00 GST"
                           className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500"
                           required
                         />

@@ -703,6 +703,16 @@ export default function App() {
       uptime_pct: 99.95,
     },
     {
+      name: "Plex, Jellyfin & QBittorrent",
+      category: "Media Streaming & Torrenting",
+      url: "http://plex-server.exocomet-gamut.ts.net",
+      port: 32400,
+      status: "Healthy",
+      latency_ms: 6,
+      host_node: "106 (Plex-LXC)",
+      uptime_pct: 99.85,
+    },
+    {
       name: "AdGuard Home DNS",
       category: "Network Security & Filtering",
       url: "http://192.168.1.101:3000",
@@ -729,7 +739,7 @@ export default function App() {
       port: 8443,
       status: "Healthy",
       latency_ms: 4,
-      host_node: "100 (Ubuntu-VM)",
+      host_node: "108 (Wazuh-LXC)",
       uptime_pct: 99.92,
     },
     {

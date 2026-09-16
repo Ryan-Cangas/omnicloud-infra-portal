@@ -862,7 +862,7 @@ export default function App() {
       category: "Security & Compliance",
       status: "Active",
       desc: "Real-time host intrusion detection and sovereign log compliance.",
-      url: "https://100.116.163.29:8443/app/wz-home#/overview/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-24h,to:now))&_a=(filters:!(),query:(language:kuery,query:''))",
+      url: "https://wazuh-lxc.exocomet-gamut.ts.net",
       logo: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS6I6AR0Npm47KYh4D_VyLPMw0UME-muPYEqVUeAhhvynuX0tr2kI3kbAU&s=10",
       icon: ShieldCheck,
     },

@@ -5,10 +5,9 @@
  * 1. Hypervisor Gateway: Multi-guest compute inspection with isolated noVNC WebSocket consoles.
  * 2. Bare-Metal Telemetry: Real-time SVG time-series graphs for CPU, RAM, NVMe/HDD storage, and Network I/O.
  * 3. Service Catalog: Health-check matrix and latency probes across homelab containers and services.
- * 4. Security & Audit: Host intrusion events, SSH logins, and container status feeds.
- * 5. Scheduled Maintenance: Notion-backed interactive maintenance windows, audits, and tasks.
- * 6. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks, Future Hardware Expansions, and Maintenance Windows.
- * 7. Service Launchpad: Direct access to hosted web applications.
+ * 4. Security & SIEM: Wazuh agent-isolated log feeds, dynamic node filters, and threat monitoring.
+ * 5. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks, Hardware Expansions, and Maintenance Windows.
+ * 6. Service Launchpad: Direct access to hosted web applications.
  */
 
 import React, { useState, useEffect } from "react";
@@ -198,9 +197,11 @@ interface SecurityAuditLog {
   id: string;
   timestamp: string;
   level: "INFO" | "WARN" | "CRITICAL";
+  level_number: number;
   source: string;
   event: string;
   ip_address: string;
+  rule_id: string;
 }
 
 function formatSpeed(kbps: number) {
@@ -514,7 +515,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
           fill="none"
           stroke="#818cf8"
           strokeWidth="2.2"
-          strokeLinecap="round"
           strokeDasharray="4 2"
           className="transition-all duration-500 ease-linear"
         />
@@ -703,16 +703,6 @@ export default function App() {
       uptime_pct: 99.95,
     },
     {
-      name: "Plex, Jellyfin & QBittorrent",
-      category: "Media Streaming & Torrenting",
-      url: "http://plex-server.exocomet-gamut.ts.net",
-      port: 32400,
-      status: "Healthy",
-      latency_ms: 6,
-      host_node: "106 (Plex-LXC)",
-      uptime_pct: 99.85,
-    },
-    {
       name: "AdGuard Home DNS",
       category: "Network Security & Filtering",
       url: "http://192.168.1.101:3000",
@@ -739,7 +729,7 @@ export default function App() {
       port: 8443,
       status: "Healthy",
       latency_ms: 4,
-      host_node: "108 (Wazuh-LXC)",
+      host_node: "100 (Ubuntu-VM)",
       uptime_pct: 99.92,
     },
     {
@@ -754,48 +744,17 @@ export default function App() {
     },
   ]);
 
-  const [securityLogs] = useState<SecurityAuditLog[]>([
-    {
-      id: "SEC-902",
-      timestamp: "Just now",
-      level: "INFO",
-      source: "pve-server",
-      event: "PAM user 'root@pam' authenticated via internal ticket",
-      ip_address: "192.168.1.50",
-    },
-    {
-      id: "SEC-901",
-      timestamp: "4 mins ago",
-      level: "WARN",
-      source: "Wazuh-HIDS",
-      event: "Multiple SSH connection attempts blocked by Fail2Ban",
-      ip_address: "185.220.101.5",
-    },
-    {
-      id: "SEC-900",
-      timestamp: "18 mins ago",
-      level: "INFO",
-      source: "101 (AdGuard-LXC)",
-      event: "DNS blocklist synchronized (412,890 rules active)",
-      ip_address: "Localhost",
-    },
-    {
-      id: "SEC-899",
-      timestamp: "1 hour ago",
-      level: "INFO",
-      source: "Tailscale-Subnet",
-      event: "Mesh node 'ryan-ubuntu-home-server' route verified",
-      ip_address: "100.116.163.29",
-    },
-    {
-      id: "SEC-898",
-      timestamp: "3 hours ago",
-      level: "CRITICAL",
-      source: "Wazuh-HIDS",
-      event: "Root privilege escalation detected in 100 (Ubuntu-VM) by ryan",
-      ip_address: "100.64.0.12",
-    },
+  // Live Wazuh states
+  const [monitoredNodes, setMonitoredNodes] = useState<string[]>([
+    "All Nodes",
+    "pve-server",
   ]);
+  const [selectedSecurityNode, setSelectedSecurityNode] =
+    useState<string>("All Nodes");
+  const [securitySeverityFilter, setSecuritySeverityFilter] =
+    useState<string>("ALL");
+  const [wazuhAlerts, setWazuhAlerts] = useState<SecurityAuditLog[]>([]);
+  const [isSecurityLoading, setIsSecurityLoading] = useState<boolean>(false);
 
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [isEventsLoading, setIsEventsLoading] = useState<boolean>(false);
@@ -1015,6 +974,27 @@ export default function App() {
     }
   };
 
+  const fetchSecurityData = async () => {
+    if (!authToken) return;
+    setIsSecurityLoading(true);
+    try {
+      const [nodesRes, alertsRes] = await Promise.all([
+        fetch("http://localhost:8000/api/v1/security/nodes", {
+          headers: getAuthHeaders(),
+        }),
+        fetch(
+          `http://localhost:8000/api/v1/security/alerts?node=${encodeURIComponent(selectedSecurityNode)}&severity=${securitySeverityFilter}`,
+          { headers: getAuthHeaders() },
+        ),
+      ]);
+      if (nodesRes.ok) setMonitoredNodes(await nodesRes.json());
+      if (alertsRes.ok) setWazuhAlerts(await alertsRes.json());
+    } catch (err) {
+    } finally {
+      setIsSecurityLoading(false);
+    }
+  };
+
   const handleCreateNote = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim() || !authToken) return;
@@ -1220,8 +1200,9 @@ export default function App() {
     if (authToken && activeTab === "notes") fetchNotes();
     if (authToken && activeTab === "upgrades") fetchUpgrades();
     if (authToken && activeTab === "calendar") fetchCalendarEvents();
+    if (authToken && activeTab === "security") fetchSecurityData();
     if (authToken && activeTab === "analytics") fetchTelemetry();
-  }, [authToken, activeTab]);
+  }, [authToken, activeTab, selectedSecurityNode, securitySeverityFilter]);
 
   const handlePowerAction = async (
     node: string,
@@ -1447,10 +1428,12 @@ export default function App() {
                 : activeTab === "services"
                   ? "Service Catalog & Health Matrix"
                   : activeTab === "security"
-                    ? "Security Telemetry & Audit Logs"
-                    : activeTab === "analytics"
-                      ? "Host Bare-Metal Telemetry"
-                      : activeTab}
+                    ? "Security Telemetry & SIEM Feed"
+                    : activeTab === "calendar"
+                      ? "Scheduled Maintenance Windows"
+                      : activeTab === "analytics"
+                        ? "Host Bare-Metal Telemetry"
+                        : activeTab}
             </h1>
           </div>
           <div className="flex items-center gap-4">
@@ -2044,18 +2027,63 @@ export default function App() {
             </div>
           )}
 
+          {/* ================= SECURITY & SIEM TAB ================= */}
           {activeTab === "security" && (
             <div className="space-y-6">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />{" "}
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
                     Security Telemetry & SIEM Audit Stream
+                    <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono rounded-full">
+                      Wazuh Active
+                    </span>
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Live security events streamed from Wazuh HIDS and PAM
-                    authentication monitors
+                    Live SIEM events streamed across hypervisors, LXC
+                    containers, and auth sensors
                   </p>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Node / Container Pill Filter */}
+                  <div className="flex items-center gap-1 bg-[#18181b] p-1 rounded-xl border border-zinc-800">
+                    {monitoredNodes.map((nodeName) => (
+                      <button
+                        key={nodeName}
+                        onClick={() => setSelectedSecurityNode(nodeName)}
+                        className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
+                          selectedSecurityNode === nodeName
+                            ? "bg-zinc-800 text-white font-semibold shadow-sm"
+                            : "text-zinc-400 hover:text-zinc-200"
+                        }`}
+                      >
+                        {nodeName}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Severity Filter */}
+                  <select
+                    value={securitySeverityFilter}
+                    onChange={(e) => setSecuritySeverityFilter(e.target.value)}
+                    className="bg-[#18181b] border border-zinc-800 text-xs text-zinc-300 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-emerald-500 font-mono"
+                  >
+                    <option value="ALL">All Severities</option>
+                    <option value="CRITICAL">Critical Only</option>
+                    <option value="WARN">Warnings & Above</option>
+                    <option value="INFO">Info & Above</option>
+                  </select>
+
+                  <button
+                    onClick={fetchSecurityData}
+                    disabled={isSecurityLoading}
+                    className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white rounded-xl transition-colors"
+                  >
+                    <RotateCcw
+                      className={`w-3.5 h-3.5 ${isSecurityLoading ? "animate-spin text-emerald-400" : ""}`}
+                    />
+                  </button>
                 </div>
               </div>
 
@@ -2065,43 +2093,58 @@ export default function App() {
                     <tr>
                       <th className="px-6 py-3">Alert ID</th>
                       <th className="px-6 py-3">Severity</th>
-                      <th className="px-6 py-3">Source Sensor</th>
+                      <th className="px-6 py-3">Node / Agent</th>
                       <th className="px-6 py-3">Audit Event Summary</th>
-                      <th className="px-6 py-3">Origin IP / Host</th>
-                      <th className="px-6 py-3 text-right">Time</th>
+                      <th className="px-6 py-3">Origin IP</th>
+                      <th className="px-6 py-3 text-right">Timestamp (GST)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/60 font-mono">
-                    {securityLogs.map((log) => (
-                      <tr key={log.id} className="hover:bg-zinc-800/20">
-                        <td className="px-6 py-4 text-zinc-400">{log.id}</td>
-                        <td className="px-6 py-4">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              log.level === "CRITICAL"
-                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                                : log.level === "WARN"
-                                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                                  : "bg-sky-500/10 text-sky-400 border border-sky-500/20"
-                            }`}
-                          >
-                            {log.level}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-white font-semibold">
-                          {log.source}
-                        </td>
-                        <td className="px-6 py-4 font-sans text-zinc-200">
-                          {log.event}
-                        </td>
-                        <td className="px-6 py-4 text-zinc-400">
-                          {formatIp(log.ip_address)}
-                        </td>
-                        <td className="px-6 py-4 text-right text-zinc-500">
-                          {log.timestamp}
+                    {wazuhAlerts.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="px-6 py-12 text-center text-zinc-500 font-sans"
+                        >
+                          {isSecurityLoading
+                            ? "Querying Wazuh Indexer..."
+                            : `No active alerts recorded for ${selectedSecurityNode}.`}
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      wazuhAlerts.map((log) => (
+                        <tr key={log.id} className="hover:bg-zinc-800/20">
+                          <td className="px-6 py-4 text-zinc-400">
+                            {log.id.slice(0, 10)}...
+                          </td>
+                          <td className="px-6 py-4">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                log.level === "CRITICAL"
+                                  ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                  : log.level === "WARN"
+                                    ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                    : "bg-sky-500/10 text-sky-400 border border-sky-500/20"
+                              }`}
+                            >
+                              {log.level}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-white font-semibold font-sans">
+                            {log.source}
+                          </td>
+                          <td className="px-6 py-4 font-sans text-zinc-200">
+                            {log.event}
+                          </td>
+                          <td className="px-6 py-4 text-zinc-400">
+                            {formatIp(log.ip_address)}
+                          </td>
+                          <td className="px-6 py-4 text-right text-zinc-500">
+                            {log.timestamp}
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>

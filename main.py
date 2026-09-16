@@ -1,15 +1,15 @@
 """
 OmniOps Homelab Control Plane & Hypervisor Gateway.
 
-Architecture & Responsibilities:
+Architecture & Modules:
 1. Cryptographic Authentication & RBAC (JWT): Issues signed HS256 access tokens.
 2. Proxmox Hypervisor Communication: Supports Proxmox API Tokens and PAM/PVE authentication.
-3. Strict Role Isolation: Two personas (SuperAdmin and Guest). Guests have strictly read-only access.
-4. Ephemeral Single-Use WebSocket Tokens: Issues 30-second scoped console tokens for out-of-band noVNC access.
-5. Bidirectional RFB WebSocket Reverse Proxy: Bridges client RFB streams to Proxmox's internal vncwebsocket daemon.
-6. Bare-Metal Telemetry & Time-Series: Metrics engine for CPU, RAM, NVMe/HDD, network RX/TX, and uptime.
-7. Notion Two-Way Sync: Native synchronization for Homelab Runbooks, Hardware Expansions, and Maintenance Windows.
-8. MFA Integration: Enforces TOTP (Microsoft Authenticator) for SuperAdmin logins.
+3. Ephemeral Single-Use WebSocket Tokens: Issues 30-second scoped console tokens for out-of-band noVNC access.
+4. Bidirectional RFB WebSocket Reverse Proxy: Bridges client RFB streams to Proxmox's internal vncwebsocket daemon.
+5. Bare-Metal Telemetry & Time-Series: Metrics engine for CPU, RAM, NVMe/HDD, network RX/TX, and uptime.
+6. Notion Two-Way Sync: Native synchronization for Homelab Runbooks, Hardware Expansions, and Maintenance Windows.
+7. Wazuh SIEM Integration: OpenSearch-compatible queries on port 9200 for live node-isolated log telemetry.
+8. MFA Integration: Enforces TOTP for SuperAdmin logins.
 """
 
 import os
@@ -62,6 +62,11 @@ NOTION_VERSION = "2022-06-28"
 ADMIN_MFA_SECRET = os.getenv("ADMIN_MFA_SECRET")
 if not ADMIN_MFA_SECRET:
     raise RuntimeError("CRITICAL: ADMIN_MFA_SECRET environment variable is missing.")
+
+# Wazuh SIEM Configuration
+WAZUH_INDEXER_HOST = os.getenv("WAZUH_INDEXER_HOST", "https://192.168.1.61:9200")
+WAZUH_INDEXER_USER = os.getenv("WAZUH_INDEXER_USER", "admin")
+WAZUH_INDEXER_PASSWORD = os.getenv("WAZUH_INDEXER_PASSWORD", "")
 
 TELEMETRY_STREAM_BUFFER = deque(maxlen=30)
 LAST_NETWORK_SNAPSHOT = {"time": 0.0, "netin": 0, "netout": 0}
@@ -168,8 +173,9 @@ security_scheme = HTTPBearer(auto_error=False)
 
 def create_jwt_token(payload_data: dict, expires_delta: timedelta) -> str:
     payload = payload_data.copy()
-    expire = datetime.now(timezone.utc) + expires_delta
-    payload.update({"exp": expire, "iat": datetime.now(timezone.utc)})
+    now_utc = datetime.now(timezone.utc)
+    expire = now_utc + expires_delta
+    payload.update({"exp": expire, "iat": now_utc})
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme)) -> UserContext:
@@ -490,6 +496,13 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
 
         uptime_secs = node_status.get("uptime", 0)
 
+        # Boot time rendered cleanly in GST
+        boot_time_gst = "N/A"
+        if uptime_secs:
+            boot_dt_utc = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() - uptime_secs, tz=timezone.utc)
+            boot_dt_gst = boot_dt_utc.astimezone(timezone(timedelta(hours=4)))
+            boot_time_gst = boot_dt_gst.strftime("%b %d, %Y %H:%M GST")
+
         return {
             "node": primary_node,
             "cpu": {
@@ -530,7 +543,7 @@ def get_node_telemetry(user: UserContext = Depends(get_current_user)):
                 "kernel_version": node_status.get("kversion", "Linux"),
                 "uptime_seconds": uptime_secs,
                 "uptime_formatted": format_uptime(uptime_secs),
-                "boot_time": datetime.fromtimestamp(datetime.now().timestamp() - uptime_secs).strftime("%b %d, %Y %H:%M GST") if uptime_secs else "N/A"
+                "boot_time": boot_time_gst
             },
             "history": list(TELEMETRY_STREAM_BUFFER)
         }
@@ -973,18 +986,58 @@ def create_notion_maintenance_event(req: CreateMaintenanceEventRequest, user: Us
     if not NOTION_API_KEY or not NOTION_MAINTENANCE_DATABASE_ID:
         raise HTTPException(status_code=500, detail="Notion Maintenance DB unconfigured in .env.")
 
+    db_meta = requests.get(
+        f"https://api.notion.com/v1/databases/{NOTION_MAINTENANCE_DATABASE_ID}",
+        headers=get_notion_headers(),
+        timeout=10
+    )
+    
+    title_key = "Title"
+    type_key = None
+    time_key = None
+    node_key = None
+    status_key = None
+    date_key = None
+
+    if db_meta.status_code == 200:
+        db_props = db_meta.json().get("properties", {})
+        for prop_name, prop_val in db_props.items():
+            p_type = prop_val.get("type")
+            p_lower = prop_name.lower()
+            if p_type == "title":
+                title_key = prop_name
+            elif "type" in p_lower or "category" in p_lower or "tag" in p_lower:
+                type_key = prop_name
+            elif "time" in p_lower:
+                time_key = prop_name
+            elif "node" in p_lower or "target" in p_lower:
+                node_key = prop_name
+            elif "status" in p_lower:
+                status_key = prop_name
+            elif p_type == "date" or "date" in p_lower:
+                date_key = prop_name
+
+    properties = {
+        title_key: {"title": [{"text": {"content": req.title}}]},
+    }
+
+    if type_key:
+        properties[type_key] = {"select": {"name": req.type}}
+    if date_key:
+        properties[date_key] = {"date": {"start": req.date}}
+    if time_key:
+        properties[time_key] = {"rich_text": [{"text": {"content": req.time}}]}
+    if node_key:
+        properties[node_key] = {"rich_text": [{"text": {"content": req.targetNode}}]}
+    if status_key:
+        properties[status_key] = {"select": {"name": req.status or "Scheduled"}}
+
     url = "https://api.notion.com/v1/pages"
     payload = {
         "parent": {"database_id": NOTION_MAINTENANCE_DATABASE_ID},
-        "properties": {
-            "Title": {"title": [{"text": {"content": req.title}}]},
-            "Type": {"select": {"name": req.type}},
-            "Date": {"date": {"start": req.date}},
-            "Time Window": {"rich_text": [{"text": {"content": req.time}}]},
-            "Target Node": {"rich_text": [{"text": {"content": req.targetNode}}]},
-            "Status": {"select": {"name": req.status or "Scheduled"}}
-        }
+        "properties": properties
     }
+    
     resp = requests.post(url, headers=get_notion_headers(), json=payload, timeout=10)
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=f"Failed to create maintenance event in Notion: {resp.text}")
@@ -1021,3 +1074,135 @@ def delete_notion_maintenance_event(page_id: str, user: UserContext = Depends(ge
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=f"Failed to delete maintenance event from Notion: {resp.text}")
     return {"status": "success", "deleted_id": page_id}
+
+# ---------------------------------------------------------------------------
+# Wazuh SIEM & Security Log Feed
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/security/nodes")
+def get_security_nodes(user: UserContext = Depends(get_current_user)):
+    """Fetch distinct monitored agents and nodes from Wazuh Indexer."""
+    default_nodes = ["All Nodes", "pve-server"]
+    if not WAZUH_INDEXER_PASSWORD:
+        return default_nodes
+
+    url = f"{WAZUH_INDEXER_HOST}/wazuh-alerts-*/_search"
+    query = {
+        "size": 0,
+        "aggs": {
+            "agents": {
+                "terms": {"field": "agent.name", "size": 50}
+            }
+        }
+    }
+    try:
+        resp = requests.post(
+            url,
+            auth=(WAZUH_INDEXER_USER, WAZUH_INDEXER_PASSWORD),
+            json=query,
+            verify=False,
+            timeout=5
+        )
+        if resp.status_code == 200:
+            buckets = resp.json().get("aggregations", {}).get("agents", {}).get("buckets", [])
+            discovered = [b["key"] for b in buckets if b.get("key")]
+            return ["All Nodes"] + sorted(list(set(discovered + ["pve-server"])))
+    except Exception as e:
+        print(f"[Wazuh Nodes Aggregation Error]: {e}")
+    return default_nodes
+
+@app.get("/api/v1/security/alerts")
+def get_security_alerts(
+    node: Optional[str] = Query("All Nodes"),
+    severity: Optional[str] = Query("ALL"),
+    limit: int = Query(30),
+    user: UserContext = Depends(get_current_user)
+):
+    """Retrieve filtered real-time alerts directly from the Wazuh Indexer."""
+    if not WAZUH_INDEXER_PASSWORD:
+        return [
+            {
+                "id": "SEC-902",
+                "timestamp": datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=4))).strftime("%b %d, %H:%M:%S GST"),
+                "level": "INFO",
+                "level_number": 3,
+                "source": "pve-server",
+                "event": "PAM user 'root@pam' authenticated via internal ticket",
+                "ip_address": "192.168.1.200",
+                "rule_id": "5501"
+            },
+            {
+                "id": "SEC-901",
+                "timestamp": (datetime.now(timezone.utc) - timedelta(minutes=4)).astimezone(timezone(timedelta(hours=4))).strftime("%b %d, %H:%M:%S GST"),
+                "level": "WARN",
+                "level_number": 7,
+                "source": "pve-server",
+                "event": "Multiple SSH connection attempts blocked by Fail2Ban",
+                "ip_address": "185.220.101.5",
+                "rule_id": "5710"
+            }
+        ]
+
+    must_clauses = []
+    if node and node != "All Nodes":
+        must_clauses.append({"term": {"agent.name": node}})
+
+    if severity and severity != "ALL":
+        level_map = {"CRITICAL": 12, "WARN": 7, "INFO": 3}
+        min_level = level_map.get(severity, 3)
+        must_clauses.append({"range": {"rule.level": {"gte": min_level}}})
+
+    query_payload = {
+        "size": limit,
+        "sort": [{"timestamp": {"order": "desc"}}],
+        "query": {"bool": {"must": must_clauses}} if must_clauses else {"match_all": {}}
+    }
+
+    try:
+        resp = requests.post(
+            f"{WAZUH_INDEXER_HOST}/wazuh-alerts-*/_search",
+            auth=(WAZUH_INDEXER_USER, WAZUH_INDEXER_PASSWORD),
+            json=query_payload,
+            verify=False,
+            timeout=6
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=f"Wazuh query failed: {resp.text}")
+
+        hits = resp.json().get("hits", {}).get("hits", [])
+        alerts = []
+        for hit in hits:
+            src = hit.get("_source", {})
+            rule = src.get("rule", {})
+            agent = src.get("agent", {})
+            lvl = int(rule.get("level", 1))
+
+            level_str = "INFO"
+            if lvl >= 12:
+                level_str = "CRITICAL"
+            elif lvl >= 7:
+                level_str = "WARN"
+
+            # Parse and convert ISO timestamp directly to GST (UTC+4)
+            raw_ts = src.get("timestamp", "")
+            gst_time_str = raw_ts[:19].replace("T", " ") + " GST"
+            try:
+                dt_utc = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                dt_gst = dt_utc.astimezone(timezone(timedelta(hours=4)))
+                gst_time_str = dt_gst.strftime("%b %d, %H:%M:%S GST")
+            except Exception:
+                pass
+
+            alerts.append({
+                "id": hit.get("_id", "N/A"),
+                "timestamp": gst_time_str,
+                "level": level_str,
+                "level_number": lvl,
+                "source": agent.get("name", "pve-server"),
+                "event": rule.get("description", "Security Event Detected"),
+                "ip_address": src.get("data", {}).get("srcip", agent.get("ip", "Localhost")),
+                "rule_id": rule.get("id", "N/A"),
+            })
+        return alerts
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error querying Wazuh Indexer: {str(e)}")

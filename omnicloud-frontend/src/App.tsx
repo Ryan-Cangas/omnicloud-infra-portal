@@ -7,7 +7,7 @@
  * 3. Service Catalog: Health-check matrix and latency probes across homelab containers and services.
  * 4. Security & SIEM: Wazuh agent-isolated log feeds, dynamic node filters, and threat monitoring.
  * 5. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks, Hardware Expansions, and Maintenance Windows.
- * 6. Service Launchpad: Direct access to hosted web applications.
+ * 6. Service Launchpad: Direct access to hosted web applications with official SVG/PNG branding.
  */
 
 import React, { useState, useEffect } from "react";
@@ -46,6 +46,9 @@ import {
   Network,
   Globe,
   Trash2,
+  Film,
+  Tv,
+  DownloadCloud,
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
 
@@ -202,6 +205,16 @@ interface SecurityAuditLog {
   event: string;
   ip_address: string;
   rule_id: string;
+}
+
+interface LaunchpadApp {
+  name: string;
+  category: string;
+  status: string;
+  desc: string;
+  url: string;
+  logo: string;
+  icon: React.ComponentType<{ className?: string }>;
 }
 
 function formatSpeed(kbps: number) {
@@ -515,6 +528,7 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
           fill="none"
           stroke="#818cf8"
           strokeWidth="2.2"
+          strokeLinecap="round"
           strokeDasharray="4 2"
           className="transition-all duration-500 ease-linear"
         />
@@ -681,6 +695,7 @@ export default function App() {
     vmName: string;
   } | null>(null);
 
+  // Expanded Homelab Service Catalog
   const [services] = useState<ServiceEndpoint[]>([
     {
       name: "Proxmox Virtual Environment",
@@ -693,9 +708,19 @@ export default function App() {
       uptime_pct: 99.98,
     },
     {
+      name: "Wazuh SIEM Manager",
+      category: "Threat Detection & Auditing",
+      url: "https://wazuh-lxc.exocomet-gamut.ts.net:8443",
+      port: 8443,
+      status: "Healthy",
+      latency_ms: 4,
+      host_node: "108 (Wazuh-LXC)",
+      uptime_pct: 99.92,
+    },
+    {
       name: "Immich Photo Archive",
       category: "Media & Computer Vision",
-      url: "http://immich-server.exocomet-gamut.ts.net",
+      url: "https://immich-server.exocomet-gamut.ts.net",
       port: 2283,
       status: "Healthy",
       latency_ms: 6,
@@ -703,14 +728,34 @@ export default function App() {
       uptime_pct: 99.95,
     },
     {
-      name: "AdGuard Home DNS",
-      category: "Network Security & Filtering",
-      url: "http://192.168.1.101:3000",
-      port: 3000,
+      name: "Plex Media Server",
+      category: "Media Streaming",
+      url: "https://plex-lxc.exocomet-gamut.ts.net:32400/web",
+      port: 32400,
       status: "Healthy",
-      latency_ms: 1,
-      host_node: "101 (AdGuard-LXC)",
-      uptime_pct: 100.0,
+      latency_ms: 3,
+      host_node: "105 (Plex-LXC)",
+      uptime_pct: 99.96,
+    },
+    {
+      name: "Jellyfin Media System",
+      category: "Open Media Streaming",
+      url: "https://plex-lxc.exocomet-gamut.ts.net:8443",
+      port: 8443,
+      status: "Healthy",
+      latency_ms: 4,
+      host_node: "106 (Jellyfin-LXC)",
+      uptime_pct: 99.91,
+    },
+    {
+      name: "qBittorrent Web Client",
+      category: "Data Ingestion & Torrenting",
+      url: "https://plex-lxc.exocomet-gamut.ts.net:9443",
+      port: 9443,
+      status: "Healthy",
+      latency_ms: 2,
+      host_node: "108 (qBitorrent-LXC)",
+      uptime_pct: 99.97,
     },
     {
       name: "Nextcloud Workspace",
@@ -723,14 +768,14 @@ export default function App() {
       uptime_pct: 99.89,
     },
     {
-      name: "Wazuh SIEM Manager",
-      category: "Threat Detection & Auditing",
-      url: "https://100.116.163.29:8443",
-      port: 8443,
+      name: "AdGuard Home DNS",
+      category: "Network Security & Filtering",
+      url: "http://192.168.1.101:3000",
+      port: 3000,
       status: "Healthy",
-      latency_ms: 4,
-      host_node: "100 (Ubuntu-VM)",
-      uptime_pct: 99.92,
+      latency_ms: 1,
+      host_node: "101 (AdGuard-LXC)",
+      uptime_pct: 100.0,
     },
     {
       name: "Nginx Proxy Manager",
@@ -748,6 +793,9 @@ export default function App() {
   const [monitoredNodes, setMonitoredNodes] = useState<string[]>([
     "All Nodes",
     "pve-server",
+    "Plex-LXC",
+    "Jellyfin-LXC",
+    "Immich-LXC",
   ]);
   const [selectedSecurityNode, setSelectedSecurityNode] =
     useState<string>("All Nodes");
@@ -798,13 +846,15 @@ export default function App() {
   const [isSubmittingUpgrade, setIsSubmittingUpgrade] =
     useState<boolean>(false);
 
-  const [apps] = useState([
+  // Applications with CDN logos and icon fallbacks
+  const [apps] = useState<LaunchpadApp[]>([
     {
       name: "Proxmox VE",
       category: "Hypervisor",
       status: "Active",
       desc: "Bare-metal virtualization management and container orchestration.",
       url: "https://pve-server.exocomet-gamut.ts.net:8006/#v1:0:18:4:::::::2",
+      logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/proxmox.svg",
       icon: Server,
     },
     {
@@ -813,14 +863,16 @@ export default function App() {
       status: "Active",
       desc: "Real-time host intrusion detection and sovereign log compliance.",
       url: "https://100.116.163.29:8443/app/wz-home#/overview/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-24h,to:now))&_a=(filters:!(),query:(language:kuery,query:''))",
+      logo: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS6I6AR0Npm47KYh4D_VyLPMw0UME-muPYEqVUeAhhvynuX0tr2kI3kbAU&s=10",
       icon: ShieldCheck,
     },
     {
       name: "NextCloud",
       category: "Cloud Storage",
       status: "Active",
-      desc: "Self-hosted productivity platform and file synchronization.",
+      desc: "Self-hosted productivity platform and encrypted file synchronization.",
       url: "https://ryan-ubuntu-home-server.exocomet-gamut.ts.net/index.php/apps/dashboard/",
+      logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/nextcloud.svg",
       icon: Cloud,
     },
     {
@@ -828,15 +880,44 @@ export default function App() {
       category: "Media Management",
       status: "Active",
       desc: "High-performance self-hosted photo and video backup solution.",
-      url: "http://immich-server.exocomet-gamut.ts.net",
+      url: "https://immich-server.exocomet-gamut.ts.net",
+      logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/immich.svg",
       icon: ImageIcon,
+    },
+    {
+      name: "Plex Media Server",
+      category: "Media Streaming",
+      status: "Active",
+      desc: "Hardware-accelerated movie, TV show, and high-fidelity music streaming.",
+      url: "https://plex-lxc.exocomet-gamut.ts.net:32400/web",
+      logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/plex.svg",
+      icon: Film,
+    },
+    {
+      name: "Jellyfin",
+      category: "Media Streaming",
+      status: "Active",
+      desc: "The Free Software media system for custom metadata and offline transcodes.",
+      url: "https://plex-lxc.exocomet-gamut.ts.net:8443",
+      logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/jellyfin.svg",
+      icon: Tv,
+    },
+    {
+      name: "qBittorrent",
+      category: "Data Ingestion",
+      status: "Active",
+      desc: "Automated BitTorrent client and peer distribution engine with web UI.",
+      url: "https://plex-lxc.exocomet-gamut.ts.net:9443",
+      logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/qbittorrent.svg",
+      icon: DownloadCloud,
     },
     {
       name: "Tailscale",
       category: "SDN / Zero-Trust",
       status: "Active",
-      desc: "WireGuard-based mesh networking console and machine routing.",
+      desc: "WireGuard-based mesh networking console and sovereign machine routing.",
       url: "https://console.tailscale.com/admin/machines?refreshed=true",
+      logo: "https://images.seeklogo.com/logo-png/39/1/tailscale-logo-png_seeklogo-396927.png",
       icon: Network,
     },
   ]);
@@ -1961,6 +2042,7 @@ export default function App() {
             </div>
           )}
 
+          {/* ================= SERVICE CATALOG ================= */}
           {activeTab === "services" && (
             <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden">
               <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
@@ -2771,6 +2853,7 @@ export default function App() {
             </div>
           )}
 
+          {/* ================= SERVICES LAUNCHPAD ================= */}
           {activeTab === "apps" && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -2779,36 +2862,66 @@ export default function App() {
                     Sovereign Cloud Applications
                   </h2>
                   <p className="text-xs text-zinc-400">
-                    Direct launchpad for containerized services and hypervisor
-                    portals
+                    Direct launchpad for containerized services, hypervisor
+                    portals, and ingest engines
                   </p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {apps.map((app, idx) => {
                   const AppIcon = app.icon;
                   return (
                     <div
                       key={idx}
-                      className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between hover:border-emerald-500/50 transition-colors group"
+                      className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between hover:border-emerald-500/50 hover:bg-[#18181c] transition-all group shadow-sm"
                     >
                       <div>
-                        <div className="flex items-center justify-between mb-3">
-                          <span className="text-[10px] font-mono text-zinc-500 uppercase font-semibold flex items-center gap-1.5">
-                            <AppIcon className="w-3.5 h-3.5 text-zinc-400 group-hover:text-emerald-400 transition-colors" />
-                            {app.category}
-                          </span>
-                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="w-10 h-10 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center overflow-hidden p-2 group-hover:border-zinc-700 transition-colors">
+                            <img
+                              src={app.logo}
+                              alt={`${app.name} logo`}
+                              className="w-full h-full object-contain"
+                              onError={(e) => {
+                                // Fallback to React Icon on error
+                                e.currentTarget.style.display = "none";
+                                const fallbackIcon =
+                                  e.currentTarget.nextElementSibling;
+                                if (fallbackIcon)
+                                  fallbackIcon.classList.remove("hidden");
+                              }}
+                            />
+                            <AppIcon className="w-5 h-5 text-zinc-400 hidden" />
+                          </div>
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
                             {app.status}
                           </span>
                         </div>
-                        <h3 className="text-sm font-bold text-white mb-2">
+
+                        <span className="text-[10px] font-mono text-zinc-500 uppercase font-semibold block mb-1">
+                          {app.category}
+                        </span>
+                        <h3 className="text-sm font-bold text-white mb-2 group-hover:text-emerald-400 transition-colors">
                           {app.name}
                         </h3>
-                        <p className="text-xs text-zinc-400 leading-relaxed">
+                        <p className="text-xs text-zinc-400 leading-relaxed line-clamp-3">
                           {app.desc}
                         </p>
+                      </div>
+
+                      <div className="mt-6 pt-4 border-t border-zinc-800/80 flex items-center justify-between">
+                        <span className="text-[10px] font-mono text-zinc-500">
+                          External Ingress
+                        </span>
+                        <a
+                          href={app.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-3 py-1.5 bg-zinc-900 hover:bg-emerald-600/20 hover:text-emerald-300 border border-zinc-800 hover:border-emerald-500/30 text-zinc-300 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-all"
+                        >
+                          Launch <ExternalLink className="w-3 h-3" />
+                        </a>
                       </div>
                     </div>
                   );

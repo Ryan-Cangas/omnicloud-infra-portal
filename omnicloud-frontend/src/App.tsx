@@ -5,16 +5,16 @@
  * 1. Hypervisor Gateway: Multi-guest compute inspection with isolated noVNC WebSocket consoles.
  * 2. Bare-Metal Telemetry: Real-time SVG time-series graphs for CPU, RAM, NVMe/HDD storage, and Network I/O.
  * 3. Service Catalog: Health-check matrix and latency probes across homelab containers and services.
- * 4. Security & SIEM: Wazuh agent-isolated log feeds, dynamic node filters, and threat monitoring.
- * 5. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks, Hardware Expansions, and Maintenance Windows.
- * 6. Service Launchpad: Direct access to hosted web applications with official SVG/PNG branding.
+ * 4. SDN Tailscale Mesh: Real-time peer path inspection (Direct WireGuard UDP vs. DERP Relay).
+ * 5. Security & SIEM: Wazuh agent-isolated log feeds, dynamic node filters, and threat monitoring.
+ * 6. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks, Hardware Expansions, and Maintenance Windows.
+ * 7. Service Launchpad: Direct access to hosted web applications with official SVG/PNG branding.
  */
 
 import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard,
   BarChart3,
-  Boxes,
   Activity,
   ShieldCheck,
   Calendar as CalendarIcon,
@@ -49,6 +49,8 @@ import {
   Film,
   Tv,
   DownloadCloud,
+  ArrowUpRight,
+  ArrowDownLeft,
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
 
@@ -207,6 +209,32 @@ interface SecurityAuditLog {
   rule_id: string;
 }
 
+interface TailscalePeer {
+  id: string;
+  hostname: string;
+  tailscale_ip: string;
+  os: string;
+  online: boolean;
+  active: boolean;
+  connection_type: "Direct" | "DERP Relay";
+  endpoint: string;
+  relay: string;
+  rx_bytes: number;
+  tx_bytes: number;
+  last_handshake: string;
+}
+
+interface TailscaleMeshState {
+  local: {
+    node_name: string;
+    tailscale_ip: string;
+    derp_relay: string;
+    direct_connections: number;
+    relayed_connections: number;
+  };
+  peers: TailscalePeer[];
+}
+
 interface LaunchpadApp {
   name: string;
   category: string;
@@ -214,47 +242,8 @@ interface LaunchpadApp {
   desc: string;
   url: string;
   logo: string;
+  invert?: boolean; // Inverts dark monochromatic SVGs for dark mode
   icon: React.ComponentType<{ className?: string }>;
-}
-
-interface TailscalePeer {
-  name: string;
-  ip: string;
-  os: string;
-  online: string;
-  activity: string;
-  relay: string;
-  cur_addr: string;
-  rx_bytes: string;
-  tx_bytes: string;
-}
-
-interface NetworkBridge {
-  name: string;
-  state: string;
-  ip: string;
-}
-
-interface SdnData {
-  tailscale: {
-    status: string;
-    self: { name: string; ip: string; os: string; online: boolean };
-    peers: TailscalePeer[];
-  };
-  interfaces: NetworkBridge[];
-}
-
-interface MountUsage {
-  path: string;
-  total_gb: number;
-  used_gb: number;
-  free_gb: number;
-  percent_used: number;
-}
-
-interface StoragePartitionData {
-  block_devices: any[];
-  mount_usage: MountUsage[];
 }
 
 function formatSpeed(kbps: number) {
@@ -262,6 +251,13 @@ function formatSpeed(kbps: number) {
   if (mbps >= 1000) return `${(mbps / 1000).toFixed(2)} Gbps`;
   if (mbps >= 1) return `${mbps.toFixed(1)} Mbps`;
   return `${(kbps * 8).toFixed(0)} Kbps`;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${bytes} B`;
 }
 
 function TelemetryAreaChart({
@@ -568,7 +564,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
           fill="none"
           stroke="#818cf8"
           strokeWidth="2.2"
-          strokeLinecap="round"
           strokeDasharray="4 2"
           className="transition-all duration-500 ease-linear"
         />
@@ -700,272 +695,11 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
   );
 }
 
-function WorkspacesAndSdnView({ authToken }: { authToken: string }) {
-  const [sdnData, setSdnData] = useState<SdnData | null>(null);
-  const [storageData, setStorageData] = useState<StoragePartitionData | null>(
-    null,
-  );
-  const [isLoading, setIsLoading] = useState(true);
-
-  const fetchData = async () => {
-    setIsLoading(true);
-    try {
-      const [sdnRes, storageRes] = await Promise.all([
-        fetch("http://localhost:8000/api/network/sdn", {
-          headers: { Authorization: `Bearer ${authToken}` },
-        }),
-        fetch("http://localhost:8000/api/storage/partitions", {
-          headers: { Authorization: `Bearer ${authToken}` },
-        }),
-      ]);
-
-      if (sdnRes.ok) setSdnData(await sdnRes.json());
-      if (storageRes.ok) setStorageData(await storageRes.json());
-    } catch (err) {
-      console.error("Failed to load SDN/Storage data", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchData();
-  }, [authToken]);
-
-  if (isLoading && !sdnData) {
-    return (
-      <div className="p-12 text-center text-xs font-mono text-zinc-500">
-        Querying Proxmox storage hierarchy and Tailscale mesh...
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-8 pb-10">
-      {/* SDN & Tailscale Mesh Section */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-bold text-white flex items-center gap-2">
-              <Network className="w-4 h-4 text-emerald-400" /> Software-Defined
-              Networking (Tailscale Overlay Mesh)
-            </h2>
-            <p className="text-xs text-zinc-400">
-              Active peer topology, direct paths, and Proxmox underlay bridges
-            </p>
-          </div>
-          <button
-            onClick={fetchData}
-            className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 rounded-xl flex items-center gap-1.5 transition-colors font-mono"
-          >
-            <RotateCcw className="w-3.5 h-3.5" /> Refresh Mesh
-          </button>
-        </div>
-
-        {/* Tailnet Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5">
-            <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider block mb-1">
-              Mesh Status
-            </span>
-            <div className="text-lg font-bold text-white flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              {sdnData?.tailscale.status || "Connected"}
-            </div>
-            <p className="text-xs text-zinc-400 mt-2 font-mono">
-              Self: {sdnData?.tailscale.self.name} ({sdnData?.tailscale.self.ip}
-              )
-            </p>
-          </div>
-
-          <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5">
-            <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider block mb-1">
-              Registered Peers
-            </span>
-            <div className="text-3xl font-bold text-white">
-              {sdnData?.tailscale.peers.length || 0}
-            </div>
-            <p className="text-xs text-emerald-400 mt-1 font-mono">
-              {sdnData?.tailscale.peers.filter((p) => p.online).length} online
-              nodes
-            </p>
-          </div>
-
-          <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5">
-            <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider block mb-1">
-              Underlay Bridges
-            </span>
-            <div className="text-3xl font-bold text-white">
-              {sdnData?.interfaces.length || 0}
-            </div>
-            <p className="text-xs text-zinc-400 mt-1 font-mono">
-              Proxmox vmbr & veth links active
-            </p>
-          </div>
-        </div>
-
-        {/* Tailscale Peers Table */}
-        <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
-          <div className="px-6 py-4 border-b border-zinc-800">
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-              Tailscale Mesh Peers & Connection Paths
-            </h3>
-          </div>
-          <table className="w-full text-left text-xs text-zinc-300">
-            <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
-              <tr>
-                <th className="px-6 py-3">Node Name</th>
-                <th className="px-6 py-3">Tailscale IP</th>
-                <th className="px-6 py-3">OS</th>
-                <th className="px-6 py-3">Status</th>
-                <th className="px-6 py-3 text-right">
-                  Route / Connection Path
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800/60 font-mono text-xs">
-              {sdnData?.tailscale.peers.map((peer, idx) => (
-                <tr key={idx} className="hover:bg-zinc-800/20">
-                  <td className="px-6 py-4 font-semibold text-white font-sans">
-                    {peer.name}
-                  </td>
-                  <td className="px-6 py-4 text-emerald-400">{peer.ip}</td>
-                  <td className="px-6 py-4 text-zinc-400 capitalize">
-                    {peer.os}
-                  </td>
-                  <td className="px-6 py-4">
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        peer.online
-                          ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                          : "bg-zinc-800 text-zinc-500"
-                      }`}
-                    >
-                      {peer.online ? "Online" : "Offline"}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right text-zinc-400 text-[11px]">
-                    {peer.cur_addr ||
-                      (peer.relay ? `DERP (${peer.relay})` : "Direct P2P")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Partitions & Storage Section */}
-      <div className="space-y-4 pt-4">
-        <div>
-          <h2 className="text-sm font-bold text-white flex items-center gap-2">
-            <HardDrive className="w-4 h-4 text-indigo-400" /> Host Partitions &
-            Storage Utilization
-          </h2>
-          <p className="text-xs text-zinc-400">
-            Filesystem mount health and physical block device tree (`lsblk`)
-          </p>
-        </div>
-
-        {/* Mount Usage Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {storageData?.mount_usage.map((mount, idx) => (
-            <div
-              key={idx}
-              className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 space-y-3"
-            >
-              <div className="flex justify-between items-center">
-                <span className="font-semibold text-white font-mono text-xs">
-                  {mount.path}
-                </span>
-                <span className="text-[11px] text-zinc-400 font-mono">
-                  {mount.used_gb} / {mount.total_gb} GB
-                </span>
-              </div>
-              <div className="w-full bg-zinc-800 rounded-full h-2 overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    mount.percent_used > 85
-                      ? "bg-rose-500"
-                      : mount.percent_used > 70
-                        ? "bg-amber-500"
-                        : "bg-emerald-500"
-                  }`}
-                  style={{ width: `${mount.percent_used}%` }}
-                />
-              </div>
-              <div className="flex justify-between items-center text-[10px] font-mono text-zinc-500">
-                <span>Free: {mount.free_gb} GB</span>
-                <span className="text-white font-bold">
-                  {mount.percent_used}% used
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Block Devices Hierarchy Table */}
-        <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
-          <div className="px-6 py-4 border-b border-zinc-800">
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-              Physical Block Devices & Partition Layouts (`lsblk`)
-            </h3>
-          </div>
-          <table className="w-full text-left text-xs text-zinc-300">
-            <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
-              <tr>
-                <th className="px-6 py-3">Device Name</th>
-                <th className="px-6 py-3">Type</th>
-                <th className="px-6 py-3">Size</th>
-                <th className="px-6 py-3">Filesystem</th>
-                <th className="px-6 py-3">Mountpoint</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800/60 font-mono text-xs">
-              {storageData?.block_devices.map((dev: any, idx: number) => (
-                <React.Fragment key={idx}>
-                  <tr className="bg-zinc-900/40 font-semibold text-white">
-                    <td className="px-6 py-3">
-                      {dev.name} {dev.model ? `(${dev.model.trim()})` : ""}
-                    </td>
-                    <td className="px-6 py-3 text-zinc-400">{dev.type}</td>
-                    <td className="px-6 py-3 text-emerald-400">{dev.size}</td>
-                    <td className="px-6 py-3 text-zinc-400">
-                      {dev.fstype || "-"}
-                    </td>
-                    <td className="px-6 py-3 text-zinc-400">
-                      {dev.mountpoint || "-"}
-                    </td>
-                  </tr>
-                  {dev.children?.map((child: any, cIdx: number) => (
-                    <tr
-                      key={`${idx}-${cIdx}`}
-                      className="text-zinc-400 hover:bg-zinc-800/20"
-                    >
-                      <td className="px-6 py-2.5 pl-10">└─ {child.name}</td>
-                      <td className="px-6 py-2.5">{child.type}</td>
-                      <td className="px-6 py-2.5 text-zinc-300">
-                        {child.size}
-                      </td>
-                      <td className="px-6 py-2.5">{child.fstype || "-"}</td>
-                      <td className="px-6 py-2.5">{child.mountpoint || "-"}</td>
-                    </tr>
-                  ))}
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<
     | "overview"
     | "analytics"
-    | "workspaces"
+    | "mesh"
     | "services"
     | "security"
     | "upgrades"
@@ -1011,17 +745,17 @@ export default function App() {
     {
       name: "Wazuh SIEM Manager",
       category: "Threat Detection & Auditing",
-      url: "https://wazuh-lxc.exocomet-gamut.ts.net:8443",
+      url: "https://100.116.163.29:8443",
       port: 8443,
       status: "Healthy",
       latency_ms: 4,
-      host_node: "108 (Wazuh-LXC)",
+      host_node: "100 (Ubuntu-VM)",
       uptime_pct: 99.92,
     },
     {
       name: "Immich Photo Archive",
       category: "Media & Computer Vision",
-      url: "https://immich-server.exocomet-gamut.ts.net",
+      url: "http://immich-server.exocomet-gamut.ts.net",
       port: 2283,
       status: "Healthy",
       latency_ms: 6,
@@ -1031,7 +765,7 @@ export default function App() {
     {
       name: "Plex Media Server",
       category: "Media Streaming",
-      url: "https://plex-lxc.exocomet-gamut.ts.net:32400/web",
+      url: "http://192.168.1.105:32400/web",
       port: 32400,
       status: "Healthy",
       latency_ms: 3,
@@ -1041,8 +775,8 @@ export default function App() {
     {
       name: "Jellyfin Media System",
       category: "Open Media Streaming",
-      url: "https://plex-lxc.exocomet-gamut.ts.net:8443",
-      port: 8443,
+      url: "http://192.168.1.106:8096",
+      port: 8096,
       status: "Healthy",
       latency_ms: 4,
       host_node: "106 (Jellyfin-LXC)",
@@ -1051,8 +785,8 @@ export default function App() {
     {
       name: "qBittorrent Web Client",
       category: "Data Ingestion & Torrenting",
-      url: "https://plex-lxc.exocomet-gamut.ts.net:9443",
-      port: 9443,
+      url: "http://192.168.1.108:8080",
+      port: 8080,
       status: "Healthy",
       latency_ms: 2,
       host_node: "108 (qBitorrent-LXC)",
@@ -1089,6 +823,10 @@ export default function App() {
       uptime_pct: 99.99,
     },
   ]);
+
+  // Live Tailscale Mesh State
+  const [meshState, setMeshState] = useState<TailscaleMeshState | null>(null);
+  const [isMeshLoading, setIsMeshLoading] = useState<boolean>(false);
 
   // Live Wazuh states
   const [monitoredNodes, setMonitoredNodes] = useState<string[]>([
@@ -1163,8 +901,9 @@ export default function App() {
       category: "Security & Compliance",
       status: "Active",
       desc: "Real-time host intrusion detection and sovereign log compliance.",
-      url: "https://wazuh-lxc.exocomet-gamut.ts.net",
-      logo: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS6I6AR0Npm47KYh4D_VyLPMw0UME-muPYEqVUeAhhvynuX0tr2kI3kbAU&s=10",
+      url: "https://100.116.163.29:8443/app/wz-home#/overview/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-24h,to:now))&_a=(filters:!(),query:(language:kuery,query:''))",
+      logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/wazuh.svg",
+      invert: true, // Inverts dark 'W.' mark to crisp white
       icon: ShieldCheck,
     },
     {
@@ -1181,7 +920,7 @@ export default function App() {
       category: "Media Management",
       status: "Active",
       desc: "High-performance self-hosted photo and video backup solution.",
-      url: "https://immich-server.exocomet-gamut.ts.net",
+      url: "http://immich-server.exocomet-gamut.ts.net",
       logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/immich.svg",
       icon: ImageIcon,
     },
@@ -1190,7 +929,7 @@ export default function App() {
       category: "Media Streaming",
       status: "Active",
       desc: "Hardware-accelerated movie, TV show, and high-fidelity music streaming.",
-      url: "https://plex-lxc.exocomet-gamut.ts.net:32400/web",
+      url: "http://192.168.1.105:32400/web",
       logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/plex.svg",
       icon: Film,
     },
@@ -1199,7 +938,7 @@ export default function App() {
       category: "Media Streaming",
       status: "Active",
       desc: "The Free Software media system for custom metadata and offline transcodes.",
-      url: "https://plex-lxc.exocomet-gamut.ts.net:8443",
+      url: "http://192.168.1.106:8096",
       logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/jellyfin.svg",
       icon: Tv,
     },
@@ -1208,7 +947,7 @@ export default function App() {
       category: "Data Ingestion",
       status: "Active",
       desc: "Automated BitTorrent client and peer distribution engine with web UI.",
-      url: "https://plex-lxc.exocomet-gamut.ts.net:9443",
+      url: "http://192.168.1.108:8080",
       logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/qbittorrent.svg",
       icon: DownloadCloud,
     },
@@ -1218,7 +957,8 @@ export default function App() {
       status: "Active",
       desc: "WireGuard-based mesh networking console and sovereign machine routing.",
       url: "https://console.tailscale.com/admin/machines?refreshed=true",
-      logo: "https://images.seeklogo.com/logo-png/39/1/tailscale-logo-png_seeklogo-396927.png",
+      logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/tailscale.svg",
+      invert: true, // Inverts dark 9-dot matrix to crisp white
       icon: Network,
     },
   ]);
@@ -1309,6 +1049,20 @@ export default function App() {
       });
       if (res.ok) setTelemetry(await res.json());
     } catch (err) {}
+  };
+
+  const fetchMeshState = async () => {
+    if (!authToken) return;
+    setIsMeshLoading(true);
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/network/mesh", {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) setMeshState(await res.json());
+    } catch (err) {
+    } finally {
+      setIsMeshLoading(false);
+    }
   };
 
   const fetchNotes = async () => {
@@ -1582,6 +1336,7 @@ export default function App() {
     if (authToken && activeTab === "notes") fetchNotes();
     if (authToken && activeTab === "upgrades") fetchUpgrades();
     if (authToken && activeTab === "calendar") fetchCalendarEvents();
+    if (authToken && activeTab === "mesh") fetchMeshState();
     if (authToken && activeTab === "security") fetchSecurityData();
     if (authToken && activeTab === "analytics") fetchTelemetry();
   }, [authToken, activeTab, selectedSecurityNode, securitySeverityFilter]);
@@ -1627,7 +1382,7 @@ export default function App() {
   const navItems = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
     { id: "analytics", label: "Host Telemetry", icon: BarChart3 },
-    { id: "workspaces", label: "Partitions & SDN", icon: Boxes },
+    { id: "mesh", label: "SDN Tailscale Mesh", icon: Network },
     { id: "services", label: "Service Catalog", icon: Globe },
     { id: "security", label: "Security & SIEM", icon: ShieldCheck },
     { id: "upgrades", label: "Hardware Expansion", icon: Zap },
@@ -1811,11 +1566,13 @@ export default function App() {
                   ? "Service Catalog & Health Matrix"
                   : activeTab === "security"
                     ? "Security Telemetry & SIEM Feed"
-                    : activeTab === "calendar"
-                      ? "Scheduled Maintenance Windows"
-                      : activeTab === "analytics"
-                        ? "Host Bare-Metal Telemetry"
-                        : activeTab}
+                    : activeTab === "mesh"
+                      ? "SDN Tailscale Mesh Network"
+                      : activeTab === "calendar"
+                        ? "Scheduled Maintenance Windows"
+                        : activeTab === "analytics"
+                          ? "Host Bare-Metal Telemetry"
+                          : activeTab}
             </h1>
           </div>
           <div className="flex items-center gap-4">
@@ -2281,8 +2038,298 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === "workspaces" && (
-            <WorkspacesAndSdnView authToken={authToken} />
+          {/* ================= SDN TAILSCALE MESH NETWORK ================= */}
+          {activeTab === "mesh" && (
+            <div className="space-y-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Network className="w-4 h-4 text-emerald-400" />
+                    SDN Tailscale Mesh Network & Route Pathing
+                    <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono rounded-full">
+                      WireGuard Native
+                    </span>
+                  </h2>
+                  <p className="text-xs text-zinc-400">
+                    Sovereign peer-to-peer overlay routing, UDP socket hole
+                    punching, and DERP relay telemetry
+                  </p>
+                </div>
+
+                <button
+                  onClick={fetchMeshState}
+                  disabled={isMeshLoading}
+                  className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white rounded-xl transition-colors self-start md:self-auto"
+                >
+                  <RotateCcw
+                    className={`w-3.5 h-3.5 ${isMeshLoading ? "animate-spin text-emerald-400" : ""}`}
+                  />
+                </button>
+              </div>
+
+              {/* Status Header Metrics */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 font-mono">
+                <div className="bg-[#151518] border border-zinc-800 rounded-2xl p-4">
+                  <span className="text-[10px] text-zinc-500 uppercase block">
+                    Local Gateway Node
+                  </span>
+                  <strong className="text-sm text-white font-bold block mt-1">
+                    {meshState?.local.node_name || "pve-server"}
+                  </strong>
+                  <span className="text-[11px] text-emerald-400 mt-0.5 block">
+                    {meshState?.local.tailscale_ip || "100.116.163.29"}
+                  </span>
+                </div>
+
+                <div className="bg-[#151518] border border-zinc-800 rounded-2xl p-4">
+                  <span className="text-[10px] text-zinc-500 uppercase block">
+                    Direct WireGuard Paths
+                  </span>
+                  <strong className="text-sm text-emerald-400 font-bold block mt-1">
+                    {meshState?.local.direct_connections || 0} Nodes
+                  </strong>
+                  <span className="text-[11px] text-zinc-400 mt-0.5 block">
+                    UDP Hole Punching Active
+                  </span>
+                </div>
+
+                <div className="bg-[#151518] border border-zinc-800 rounded-2xl p-4">
+                  <span className="text-[10px] text-zinc-500 uppercase block">
+                    Relayed Fallbacks
+                  </span>
+                  <strong className="text-sm text-amber-400 font-bold block mt-1">
+                    {meshState?.local.relayed_connections || 0} Nodes
+                  </strong>
+                  <span className="text-[11px] text-zinc-400 mt-0.5 block">
+                    DERP Tunneling In Use
+                  </span>
+                </div>
+
+                <div className="bg-[#151518] border border-zinc-800 rounded-2xl p-4">
+                  <span className="text-[10px] text-zinc-500 uppercase block">
+                    Preferred Relay Region
+                  </span>
+                  <strong className="text-sm text-sky-400 font-bold block mt-1">
+                    {meshState?.local.derp_relay?.toUpperCase() || "DXB"}
+                  </strong>
+                  <span className="text-[11px] text-zinc-400 mt-0.5 block">
+                    Dubai (Region 24)
+                  </span>
+                </div>
+              </div>
+
+              {/* Peer Table */}
+              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
+                <table className="w-full text-left text-xs text-zinc-300">
+                  <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800 font-mono">
+                    <tr>
+                      <th className="px-6 py-3">Peer Machine</th>
+                      <th className="px-6 py-3">Tailscale IPv4</th>
+                      <th className="px-6 py-3">OS / Architecture</th>
+                      <th className="px-6 py-3">Connection Path</th>
+                      <th className="px-6 py-3">Transport Socket</th>
+                      <th className="px-6 py-3 text-right">
+                        Throughput (RX/TX)
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60 font-mono">
+                    {!meshState || meshState.peers.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="px-6 py-12 text-center text-zinc-500 font-sans"
+                        >
+                          {isMeshLoading
+                            ? "Polling mesh routes..."
+                            : "No peers connected to your tailnet."}
+                        </td>
+                      </tr>
+                    ) : (
+                      meshState.peers.map((peer) => (
+                        <tr
+                          key={peer.id}
+                          className="hover:bg-zinc-800/20 transition-colors"
+                        >
+                          <td className="px-6 py-4 font-semibold text-white flex items-center gap-2">
+                            <span
+                              className={`w-2 h-2 rounded-full ${peer.online ? "bg-emerald-400" : "bg-zinc-600"}`}
+                            />
+                            {peer.hostname}
+                          </td>
+                          <td className="px-6 py-4 text-emerald-400">
+                            {peer.tailscale_ip}
+                          </td>
+                          <td className="px-6 py-4 text-zinc-400">{peer.os}</td>
+                          <td className="px-6 py-4">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                peer.connection_type === "Direct"
+                                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                  : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                              }`}
+                            >
+                              {peer.connection_type}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-zinc-300">
+                            {peer.endpoint}
+                          </td>
+                          <td className="px-6 py-4 text-right text-zinc-400">
+                            <span className="inline-flex items-center gap-1 text-emerald-400 mr-2">
+                              <ArrowDownLeft className="w-3 h-3" />{" "}
+                              {formatBytes(peer.rx_bytes)}
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-indigo-400">
+                              <ArrowUpRight className="w-3 h-3" />{" "}
+                              {formatBytes(peer.tx_bytes)}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* ================= TELEMETRY & NETWORK LEGEND ================= */}
+              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 space-y-4">
+                <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Tag className="w-4 h-4 text-sky-400" />
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                      SDN Mesh Telemetry Glossary & Protocol Legend
+                    </h3>
+                  </div>
+                  <span className="text-[10px] font-mono text-zinc-500">
+                    RFC WireGuard / DERP Protocol Specification
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-xs font-mono">
+                  {/* Item 1: DERP */}
+                  <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded font-bold text-[10px]">
+                        DERP Relay
+                      </span>
+                      <span className="text-zinc-500 text-[10px]">
+                        Designated Encrypted Relay for Packets
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
+                      A globally distributed fallback relay protocol operating
+                      over HTTPS/WebSockets (TCP 443). Packets are end-to-end
+                      encrypted; DERP relays forward payload frames without
+                      possessing cryptographic keys.
+                    </p>
+                  </div>
+
+                  {/* Item 2: Direct */}
+                  <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded font-bold text-[10px]">
+                        Direct Path
+                      </span>
+                      <span className="text-zinc-500 text-[10px]">
+                        Peer-to-Peer UDP Hole Punching
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
+                      Direct, un-relayed WireGuard tunnel established
+                      point-to-point between nodes via STUN NAT hole punching
+                      (default UDP port{" "}
+                      <strong className="text-emerald-400">41641</strong>).
+                      Delivers the lowest latency and line-rate throughput.
+                    </p>
+                  </div>
+
+                  {/* Item 3: Regional Relays */}
+                  <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="px-2 py-0.5 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded font-bold text-[10px]">
+                        IATA Relay Codes
+                      </span>
+                      <span className="text-zinc-500 text-[10px]">
+                        Geographic Relay Region ID
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
+                      Tailscale DERP nodes are named after nearest international
+                      airport IATA codes:
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 pt-1 text-[10px]">
+                      <span className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded">
+                        <strong>dxb</strong>: Dubai (UAE)
+                      </span>
+                      <span className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded">
+                        <strong>blr</strong>: Bangalore (India)
+                      </span>
+                      <span className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded">
+                        <strong>sin</strong>: Singapore
+                      </span>
+                      <span className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded">
+                        <strong>fra</strong>: Frankfurt (EU)
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Item 4: CGNAT IP */}
+                  <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded font-bold text-[10px]">
+                        100.64.0.0/10
+                      </span>
+                      <span className="text-zinc-500 text-[10px]">
+                        Carrier-Grade NAT (RFC 6598)
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
+                      Assigned overlay IPv4 address space exclusive to your
+                      tailnet. Enables collision-free routing across disparate
+                      subnets and remote home labs without requiring
+                      split-horizon DNS overrides.
+                    </p>
+                  </div>
+
+                  {/* Item 5: Endpoints & Handshakes */}
+                  <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="px-2 py-0.5 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded font-bold text-[10px]">
+                        Socket Endpoints
+                      </span>
+                      <span className="text-zinc-500 text-[10px]">
+                        Public/Private Socket Tuples
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
+                      Format: <code className="text-emerald-400">IP:Port</code>.
+                      Indicates the actual physical layer address negotiated
+                      between WireGuard crypto-routers. Transitions to DERP
+                      fallback only if stateful firewall inspects or drops UDP.
+                    </p>
+                  </div>
+
+                  {/* Item 6: Tailscale Serve */}
+                  <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded font-bold text-[10px]">
+                        Tailscale Serve
+                      </span>
+                      <span className="text-zinc-500 text-[10px]">
+                        Reverse Proxy Ingress
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
+                      Terminates publicly trusted HTTPS certificates from Let's
+                      Encrypt for internal services (e.g., Wazuh, qBittorrent,
+                      Jellyfin) and forwards traffic to local backend ports
+                      without manual cert provisioning.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
 
           {/* ================= SERVICE CATALOG ================= */}
@@ -3125,9 +3172,12 @@ export default function App() {
                             <img
                               src={app.logo}
                               alt={`${app.name} logo`}
-                              className="w-full h-full object-contain"
+                              className={`w-full h-full object-contain transition-all ${
+                                app.invert
+                                  ? "brightness-200 invert contrast-200"
+                                  : ""
+                              }`}
                               onError={(e) => {
-                                // Fallback to React Icon on error
                                 e.currentTarget.style.display = "none";
                                 const fallbackIcon =
                                   e.currentTarget.nextElementSibling;

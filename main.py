@@ -15,6 +15,8 @@ Architecture & Modules:
 import os
 import ssl
 import json
+import subprocess
+import shutil
 import asyncio
 import inspect
 import urllib.parse
@@ -31,7 +33,7 @@ import urllib3
 import websockets
 import pyotp
 from pydantic import BaseModel
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query, status
+from fastapi import FastAPI, APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from proxmoxer import ProxmoxAPI
@@ -1206,3 +1208,117 @@ def get_security_alerts(
         return alerts
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error querying Wazuh Indexer: {str(e)}")
+
+# ---------------------------------------------------------------------------
+# SDN and Partitions/Storage Tabs
+# ---------------------------------------------------------------------------
+
+@app.get("/api/network/sdn")
+def get_sdn_mesh():
+    """Fetch Tailscale mesh topology and underlay network interfaces."""
+    # Initialize dictionary structure to hold the combined network metrics
+    mesh_data = {"peers": [], "self": {}, "status": "unknown"}
+    
+    # 1. Pull Tailscale Mesh Topology via CLI JSON output
+    try:
+        # Execute 'tailscale status --json' to retrieve raw mesh node details
+        ts_output = subprocess.check_output(
+            ["tailscale", "status", "--json"], 
+            stderr=subprocess.STDOUT, 
+            timeout=5
+        )
+        # Parse the byte-string output into a Python dictionary
+        ts_json = json.loads(ts_output.decode("utf-8"))
+        
+        # Extract metadata corresponding to the local machine running the agent
+        self_node = ts_json.get("Self", {})
+        mesh_data["self"] = {
+            "name": self_node.get("HostName"),
+            "ip": self_node.get("TailscaleIPs", [""])[0],
+            "os": self_node.get("OS"),
+            "online": self_node.get("Online", False)
+        }
+        
+        # Iterate over all registered peers in the tailnet mesh dictionary
+        peer_list = []
+        for _, peer in ts_json.get("Peer", {}).items():
+            peer_list.append({
+                "name": peer.get("HostName"),
+                "ip": peer.get("TailscaleIPs", [""])[0],
+                "os": peer.get("OS"),
+                "online": peer.get("Online", False),
+                "active": peer.get("Active", False),
+                "relay": peer.get("Relay", ""),
+                "cur_addr": peer.get("CurAddr", "Direct / Local"),
+                "rx_bytes": peer.get("RxBytes", 0),
+                "tx_bytes": peer.get("TxBytes", 0)
+            })
+        # Assign the compiled list of active/offline peers to our response payload
+        mesh_data["peers"] = peer_list
+        mesh_data["status"] = "connected"
+    except Exception as e:
+        # Fallback error state if Tailscale binary is missing or daemon is unreachable
+        mesh_data["status"] = f"offline / error: {str(e)}"
+
+    # 2. Pull Local Host Network Bridges (Linux / Proxmox underlay)
+    bridges = []
+    try:
+        # Run 'ip -j addr' to get a structured JSON representation of system interfaces
+        ip_output = subprocess.check_output(["ip", "-j", "addr"], timeout=5)
+        interfaces = json.loads(ip_output.decode("utf-8"))
+        
+        # Filter for relevant bridge, ethernet, and virtual network interfaces
+        for iface in interfaces:
+            if iface.get("ifname", "").startswith(("vmbr", "eth", "tailscale")):
+                addr_info = iface.get("addr_info", [])
+                # Grab the first available IPv4 address, or default if unassigned
+                ipv4 = addr_info[0].get("local") if addr_info else "unassigned"
+                bridges.append({
+                    "name": iface.get("ifname"),
+                    "state": iface.get("operstate"),
+                    "ip": ipv4
+                })
+    except Exception:
+        pass
+
+    # Return the aggregated JSON payload containing both overlay and underlay maps
+    return {"tailscale": mesh_data, "interfaces": bridges}
+
+
+@app.get("/api/storage/partitions")
+def get_partitions_storage():
+    """Fetch physical disk partitions, mount points, and pool capacity."""
+    disks = []
+    try:
+        # Execute 'lsblk' with JSON and custom columns to parse hardware partition trees
+        lsblk_out = subprocess.check_output(
+            ["lsblk", "-J", "-o", "NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,MODEL"], 
+            timeout=5
+        )
+        # Parse block device hierarchy block into standard dictionaries
+        disks = json.loads(lsblk_out.decode("utf-8")).get("blockdevices", [])
+    except Exception as e:
+        disks = [{"error": str(e)}]
+
+    # Define core critical mount paths to measure storage utilization against
+    mount_paths = ["/", "/mnt", "/downloads"]
+    mount_stats = []
+    
+    # Iterate through each path to collect filesystem capacity metrics
+    for path in mount_paths:
+        try:
+            # Query the operating system for total, used, and free space bytes
+            usage = shutil.disk_usage(path)
+            mount_stats.append({
+                "path": path,
+                "total_gb": round(usage.total / (1024**3), 2),
+                "used_gb": round(usage.used / (1024**3), 2),
+                "free_gb": round(usage.free / (1024**3), 2),
+                "percent_used": round((usage.used / usage.total) * 100, 1)
+            })
+        except FileNotFoundError:
+            # Skip mount paths that do not exist locally on this node
+            continue
+
+    # Return structured storage metrics and physical layouts
+    return {"block_devices": disks, "mount_usage": mount_stats}

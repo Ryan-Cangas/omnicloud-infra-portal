@@ -217,6 +217,46 @@ interface LaunchpadApp {
   icon: React.ComponentType<{ className?: string }>;
 }
 
+interface TailscalePeer {
+  name: string;
+  ip: string;
+  os: string;
+  online: string;
+  activity: string;
+  relay: string;
+  cur_addr: string;
+  rx_bytes: string;
+  tx_bytes: string;
+}
+
+interface NetworkBridge {
+  name: string;
+  state: string;
+  ip: string;
+}
+
+interface SdnData {
+  tailscale: {
+    status: string;
+    self: { name: string; ip: string; os: string; online: boolean };
+    peers: TailscalePeer[];
+  };
+  interfaces: NetworkBridge[];
+}
+
+interface MountUsage {
+  path: string;
+  total_gb: number;
+  used_gb: number;
+  free_gb: number;
+  percent_used: number;
+}
+
+interface StoragePartitionData {
+  block_devices: any[];
+  mount_usage: MountUsage[];
+}
+
 function formatSpeed(kbps: number) {
   const mbps = (kbps * 8) / 1000;
   if (mbps >= 1000) return `${(mbps / 1000).toFixed(2)} Gbps`;
@@ -655,6 +695,267 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
         <span className="text-zinc-500">
           Peak Window: {formatSpeed(maxRate)}
         </span>
+      </div>
+    </div>
+  );
+}
+
+function WorkspacesAndSdnView({ authToken }: { authToken: string }) {
+  const [sdnData, setSdnData] = useState<SdnData | null>(null);
+  const [storageData, setStorageData] = useState<StoragePartitionData | null>(
+    null,
+  );
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchData = async () => {
+    setIsLoading(true);
+    try {
+      const [sdnRes, storageRes] = await Promise.all([
+        fetch("http://localhost:8000/api/network/sdn", {
+          headers: { Authorization: `Bearer ${authToken}` },
+        }),
+        fetch("http://localhost:8000/api/storage/partitions", {
+          headers: { Authorization: `Bearer ${authToken}` },
+        }),
+      ]);
+
+      if (sdnRes.ok) setSdnData(await sdnRes.json());
+      if (storageRes.ok) setStorageData(await storageRes.json());
+    } catch (err) {
+      console.error("Failed to load SDN/Storage data", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, [authToken]);
+
+  if (isLoading && !sdnData) {
+    return (
+      <div className="p-12 text-center text-xs font-mono text-zinc-500">
+        Querying Proxmox storage hierarchy and Tailscale mesh...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8 pb-10">
+      {/* SDN & Tailscale Mesh Section */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-white flex items-center gap-2">
+              <Network className="w-4 h-4 text-emerald-400" /> Software-Defined
+              Networking (Tailscale Overlay Mesh)
+            </h2>
+            <p className="text-xs text-zinc-400">
+              Active peer topology, direct paths, and Proxmox underlay bridges
+            </p>
+          </div>
+          <button
+            onClick={fetchData}
+            className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 rounded-xl flex items-center gap-1.5 transition-colors font-mono"
+          >
+            <RotateCcw className="w-3.5 h-3.5" /> Refresh Mesh
+          </button>
+        </div>
+
+        {/* Tailnet Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5">
+            <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider block mb-1">
+              Mesh Status
+            </span>
+            <div className="text-lg font-bold text-white flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+              {sdnData?.tailscale.status || "Connected"}
+            </div>
+            <p className="text-xs text-zinc-400 mt-2 font-mono">
+              Self: {sdnData?.tailscale.self.name} ({sdnData?.tailscale.self.ip}
+              )
+            </p>
+          </div>
+
+          <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5">
+            <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider block mb-1">
+              Registered Peers
+            </span>
+            <div className="text-3xl font-bold text-white">
+              {sdnData?.tailscale.peers.length || 0}
+            </div>
+            <p className="text-xs text-emerald-400 mt-1 font-mono">
+              {sdnData?.tailscale.peers.filter((p) => p.online).length} online
+              nodes
+            </p>
+          </div>
+
+          <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5">
+            <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider block mb-1">
+              Underlay Bridges
+            </span>
+            <div className="text-3xl font-bold text-white">
+              {sdnData?.interfaces.length || 0}
+            </div>
+            <p className="text-xs text-zinc-400 mt-1 font-mono">
+              Proxmox vmbr & veth links active
+            </p>
+          </div>
+        </div>
+
+        {/* Tailscale Peers Table */}
+        <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
+          <div className="px-6 py-4 border-b border-zinc-800">
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+              Tailscale Mesh Peers & Connection Paths
+            </h3>
+          </div>
+          <table className="w-full text-left text-xs text-zinc-300">
+            <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
+              <tr>
+                <th className="px-6 py-3">Node Name</th>
+                <th className="px-6 py-3">Tailscale IP</th>
+                <th className="px-6 py-3">OS</th>
+                <th className="px-6 py-3">Status</th>
+                <th className="px-6 py-3 text-right">
+                  Route / Connection Path
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-800/60 font-mono text-xs">
+              {sdnData?.tailscale.peers.map((peer, idx) => (
+                <tr key={idx} className="hover:bg-zinc-800/20">
+                  <td className="px-6 py-4 font-semibold text-white font-sans">
+                    {peer.name}
+                  </td>
+                  <td className="px-6 py-4 text-emerald-400">{peer.ip}</td>
+                  <td className="px-6 py-4 text-zinc-400 capitalize">
+                    {peer.os}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        peer.online
+                          ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                          : "bg-zinc-800 text-zinc-500"
+                      }`}
+                    >
+                      {peer.online ? "Online" : "Offline"}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-right text-zinc-400 text-[11px]">
+                    {peer.cur_addr ||
+                      (peer.relay ? `DERP (${peer.relay})` : "Direct P2P")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Partitions & Storage Section */}
+      <div className="space-y-4 pt-4">
+        <div>
+          <h2 className="text-sm font-bold text-white flex items-center gap-2">
+            <HardDrive className="w-4 h-4 text-indigo-400" /> Host Partitions &
+            Storage Utilization
+          </h2>
+          <p className="text-xs text-zinc-400">
+            Filesystem mount health and physical block device tree (`lsblk`)
+          </p>
+        </div>
+
+        {/* Mount Usage Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {storageData?.mount_usage.map((mount, idx) => (
+            <div
+              key={idx}
+              className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 space-y-3"
+            >
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-white font-mono text-xs">
+                  {mount.path}
+                </span>
+                <span className="text-[11px] text-zinc-400 font-mono">
+                  {mount.used_gb} / {mount.total_gb} GB
+                </span>
+              </div>
+              <div className="w-full bg-zinc-800 rounded-full h-2 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    mount.percent_used > 85
+                      ? "bg-rose-500"
+                      : mount.percent_used > 70
+                        ? "bg-amber-500"
+                        : "bg-emerald-500"
+                  }`}
+                  style={{ width: `${mount.percent_used}%` }}
+                />
+              </div>
+              <div className="flex justify-between items-center text-[10px] font-mono text-zinc-500">
+                <span>Free: {mount.free_gb} GB</span>
+                <span className="text-white font-bold">
+                  {mount.percent_used}% used
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Block Devices Hierarchy Table */}
+        <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
+          <div className="px-6 py-4 border-b border-zinc-800">
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+              Physical Block Devices & Partition Layouts (`lsblk`)
+            </h3>
+          </div>
+          <table className="w-full text-left text-xs text-zinc-300">
+            <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
+              <tr>
+                <th className="px-6 py-3">Device Name</th>
+                <th className="px-6 py-3">Type</th>
+                <th className="px-6 py-3">Size</th>
+                <th className="px-6 py-3">Filesystem</th>
+                <th className="px-6 py-3">Mountpoint</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-800/60 font-mono text-xs">
+              {storageData?.block_devices.map((dev: any, idx: number) => (
+                <React.Fragment key={idx}>
+                  <tr className="bg-zinc-900/40 font-semibold text-white">
+                    <td className="px-6 py-3">
+                      {dev.name} {dev.model ? `(${dev.model.trim()})` : ""}
+                    </td>
+                    <td className="px-6 py-3 text-zinc-400">{dev.type}</td>
+                    <td className="px-6 py-3 text-emerald-400">{dev.size}</td>
+                    <td className="px-6 py-3 text-zinc-400">
+                      {dev.fstype || "-"}
+                    </td>
+                    <td className="px-6 py-3 text-zinc-400">
+                      {dev.mountpoint || "-"}
+                    </td>
+                  </tr>
+                  {dev.children?.map((child: any, cIdx: number) => (
+                    <tr
+                      key={`${idx}-${cIdx}`}
+                      className="text-zinc-400 hover:bg-zinc-800/20"
+                    >
+                      <td className="px-6 py-2.5 pl-10">└─ {child.name}</td>
+                      <td className="px-6 py-2.5">{child.type}</td>
+                      <td className="px-6 py-2.5 text-zinc-300">
+                        {child.size}
+                      </td>
+                      <td className="px-6 py-2.5">{child.fstype || "-"}</td>
+                      <td className="px-6 py-2.5">{child.mountpoint || "-"}</td>
+                    </tr>
+                  ))}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -1981,65 +2282,7 @@ export default function App() {
           )}
 
           {activeTab === "workspaces" && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-bold text-white">
-                    Isolated Tenant Partitions
-                  </h2>
-                  <p className="text-xs text-zinc-400">
-                    Compute boundaries and SDN VLAN allocations
-                  </p>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {[
-                  {
-                    name: "Alpha Core Services",
-                    vlan: "VLAN 101",
-                    vms: 3,
-                    quota: "32GB RAM / 8 vCPU",
-                    tier: "Production",
-                  },
-                  {
-                    name: "Vault & Data Storage",
-                    vlan: "VLAN 102",
-                    vms: 2,
-                    quota: "16GB RAM / 4 vCPU",
-                    tier: "Encrypted",
-                  },
-                  {
-                    name: "DevSecOps Sandbox",
-                    vlan: "VLAN 104",
-                    vms: 0,
-                    quota: "64GB RAM / 16 vCPU",
-                    tier: "Experimental",
-                  },
-                ].map((ws, i) => (
-                  <div
-                    key={i}
-                    className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="px-2 py-0.5 bg-zinc-800 text-[10px] font-mono text-zinc-400 rounded">
-                          {ws.vlan}
-                        </span>
-                        <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
-                          {ws.tier}
-                        </span>
-                      </div>
-                      <h3 className="text-sm font-bold text-white mb-1">
-                        {ws.name}
-                      </h3>
-                      <p className="text-xs text-zinc-400 font-mono">
-                        {ws.quota}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <WorkspacesAndSdnView authToken={authToken} />
           )}
 
           {/* ================= SERVICE CATALOG ================= */}

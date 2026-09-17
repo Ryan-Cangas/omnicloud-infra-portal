@@ -749,7 +749,7 @@ export default function App() {
       port: 8443,
       status: "Healthy",
       latency_ms: 4,
-      host_node: "100 (Ubuntu-VM)",
+      host_node: "108 (Wazuh-LXC)",
       uptime_pct: 99.92,
     },
     {

@@ -1301,20 +1301,6 @@ def get_tailscale_mesh(user: UserContext = Depends(get_current_user)):
         },
         "peers": [
             {
-                "id": "node-1",
-                "hostname": "ryan-ubuntu-home-server",
-                "tailscale_ip": "100.116.163.29",
-                "os": "Linux (Ubuntu 24.04)",
-                "online": True,
-                "active": True,
-                "connection_type": "Direct",
-                "endpoint": "192.168.1.61:41641",
-                "relay": "direct",
-                "rx_bytes": 104857600,
-                "tx_bytes": 83886080,
-                "last_handshake": "Just now"
-            },
-            {
                 "id": "node-2",
                 "hostname": "immich-server",
                 "tailscale_ip": "100.64.0.102",
@@ -1332,7 +1318,7 @@ def get_tailscale_mesh(user: UserContext = Depends(get_current_user)):
                 "id": "node-3",
                 "hostname": "wazuh-dashboard",
                 "tailscale_ip": "100.64.0.100",
-                "os": "Linux (Ubuntu VM)",
+                "os": "Linux (Wazuh-LXC)",
                 "online": True,
                 "active": True,
                 "connection_type": "Direct",

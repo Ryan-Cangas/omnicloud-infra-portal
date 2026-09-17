@@ -253,5 +253,4 @@ Verify your public routing status:
 tailscale funnel status
 ```
 
-Developed and Engineered by Ryan Cangas
-Dubai, United Arab Emirates
+Developed and Engineered by Ryan Cangas, Dubai, United Arab Emirates

@@ -745,7 +745,7 @@ export default function App() {
     {
       name: "Wazuh SIEM Manager",
       category: "Threat Detection & Auditing",
-      url: "https://100.116.163.29:8443",
+      url: "https://wazuh-lxc.exocomet-gamut.ts.net",
       port: 8443,
       status: "Healthy",
       latency_ms: 4,
@@ -901,7 +901,7 @@ export default function App() {
       category: "Security & Compliance",
       status: "Active",
       desc: "Real-time host intrusion detection and sovereign log compliance.",
-      url: "https://100.116.163.29:8443/app/wz-home#/overview/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-24h,to:now))&_a=(filters:!(),query:(language:kuery,query:''))",
+      url: "https://wazuh-lxc.exocomet-gamut.ts.net",
       logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/wazuh.svg",
       invert: true, // Inverts dark 'W.' mark to crisp white
       icon: ShieldCheck,
@@ -2077,7 +2077,7 @@ export default function App() {
                     {meshState?.local.node_name || "pve-server"}
                   </strong>
                   <span className="text-[11px] text-emerald-400 mt-0.5 block">
-                    {meshState?.local.tailscale_ip || "100.116.163.29"}
+                    {meshState?.local.tailscale_ip || "Wazuh-LXC"}
                   </span>
                 </div>
 

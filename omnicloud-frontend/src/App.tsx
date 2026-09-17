@@ -5,10 +5,10 @@
  * 1. Hypervisor Gateway: Multi-guest compute inspection with isolated noVNC WebSocket consoles.
  * 2. Bare-Metal Telemetry: Real-time SVG time-series graphs for CPU, RAM, NVMe/HDD storage, and Network I/O.
  * 3. Service Catalog: Health-check matrix and latency probes across homelab containers and services.
- * 4. SDN Tailscale Mesh: Real-time peer path inspection (Direct WireGuard UDP vs. DERP Relay).
+ * 4. SDN Tailscale Mesh: Real-time peer path inspection with IP masking for guests and protocol glossary.
  * 5. Security & SIEM: Wazuh agent-isolated log feeds, dynamic node filters, and threat monitoring.
  * 6. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks, Hardware Expansions, and Maintenance Windows.
- * 7. Service Launchpad: Direct access to hosted web applications with official SVG/PNG branding.
+ * 7. Service Launchpad: Direct access to hosted web applications with official branding.
  */
 
 import React, { useState, useEffect } from "react";
@@ -242,7 +242,7 @@ interface LaunchpadApp {
   desc: string;
   url: string;
   logo: string;
-  invert?: boolean; // Inverts dark monochromatic SVGs for dark mode
+  invert?: boolean;
   icon: React.ComponentType<{ className?: string }>;
 }
 
@@ -564,6 +564,7 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
           fill="none"
           stroke="#818cf8"
           strokeWidth="2.2"
+          strokeLinecap="round"
           strokeDasharray="4 2"
           className="transition-all duration-500 ease-linear"
         />
@@ -730,7 +731,6 @@ export default function App() {
     vmName: string;
   } | null>(null);
 
-  // Expanded Homelab Service Catalog
   const [services] = useState<ServiceEndpoint[]>([
     {
       name: "Proxmox Virtual Environment",
@@ -745,7 +745,7 @@ export default function App() {
     {
       name: "Wazuh SIEM Manager",
       category: "Threat Detection & Auditing",
-      url: "https://wazuh-lxc.exocomet-gamut.ts.net",
+      url: "https:wazuh.exocomet-gamut.ts.net",
       port: 8443,
       status: "Healthy",
       latency_ms: 4,
@@ -824,11 +824,9 @@ export default function App() {
     },
   ]);
 
-  // Live Tailscale Mesh State
   const [meshState, setMeshState] = useState<TailscaleMeshState | null>(null);
   const [isMeshLoading, setIsMeshLoading] = useState<boolean>(false);
 
-  // Live Wazuh states
   const [monitoredNodes, setMonitoredNodes] = useState<string[]>([
     "All Nodes",
     "pve-server",
@@ -885,7 +883,6 @@ export default function App() {
   const [isSubmittingUpgrade, setIsSubmittingUpgrade] =
     useState<boolean>(false);
 
-  // Applications with CDN logos and icon fallbacks
   const [apps] = useState<LaunchpadApp[]>([
     {
       name: "Proxmox VE",
@@ -901,9 +898,9 @@ export default function App() {
       category: "Security & Compliance",
       status: "Active",
       desc: "Real-time host intrusion detection and sovereign log compliance.",
-      url: "https://wazuh-lxc.exocomet-gamut.ts.net",
+      url: "https://wazuh.exocomet-gamut.ts.net/app/wz-home#/overview/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-24h,to:now))&_a=(filters:!(),query:(language:kuery,query:''))",
       logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/wazuh.svg",
-      invert: true, // Inverts dark 'W.' mark to crisp white
+      invert: true,
       icon: ShieldCheck,
     },
     {
@@ -911,7 +908,7 @@ export default function App() {
       category: "Cloud Storage",
       status: "Active",
       desc: "Self-hosted productivity platform and encrypted file synchronization.",
-      url: "https://ryan-ubuntu-home-server.exocomet-gamut.ts.net/index.php/apps/dashboard/",
+      url: "https://nextcloud-lxc.exocomet-gamut.ts.net",
       logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/nextcloud.svg",
       icon: Cloud,
     },
@@ -958,7 +955,7 @@ export default function App() {
       desc: "WireGuard-based mesh networking console and sovereign machine routing.",
       url: "https://console.tailscale.com/admin/machines?refreshed=true",
       logo: "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/tailscale.svg",
-      invert: true, // Inverts dark 9-dot matrix to crisp white
+      invert: true,
       icon: Network,
     },
   ]);
@@ -1347,7 +1344,7 @@ export default function App() {
     vmid: number,
     action: string,
   ) => {
-    if (!authToken) return;
+    if (!authToken || currentUser?.role !== "SuperAdmin") return;
     setActionLoading(vmid);
     try {
       const res = await fetch(
@@ -1368,16 +1365,33 @@ export default function App() {
     }
   };
 
+  // Helper for masking IPs and physical endpoints for Guests
   const formatIp = (ip: string) => {
+    if (!ip) return "N/A";
     if (currentUser?.role === "SuperAdmin") return ip;
-    if (ip === "Localhost") return ip;
+    if (ip.toLowerCase() === "localhost") return ip;
     const parts = ip.split(".");
     if (parts.length === 4) return `${parts[0]}.${parts[1]}.***.***`;
     return "***.***.***.***";
   };
 
+  const formatEndpoint = (ep: string) => {
+    if (!ep) return "N/A";
+    if (currentUser?.role === "SuperAdmin") return ep;
+    if (ep.toLowerCase().includes("derp")) return ep;
+    const [ipPart, port] = ep.split(":");
+    if (ipPart && port) {
+      const parts = ipPart.split(".");
+      if (parts.length === 4) {
+        return `${parts[0]}.${parts[1]}.***.***:${port}`;
+      }
+    }
+    return "***.***.***.***";
+  };
+
   const canControlPower = currentUser?.role === "SuperAdmin";
   const canAccessConsole = currentUser?.role === "SuperAdmin";
+  const isSuperAdmin = currentUser?.role === "SuperAdmin";
 
   const navItems = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -1718,22 +1732,30 @@ export default function App() {
                             % ({vm.maxmem_gb} GB)
                           </td>
                           <td className="px-6 py-4 text-right space-x-2">
-                            <button
-                              onClick={() =>
-                                setActiveTerminal({
-                                  node: vm.node,
-                                  vmType: vm.type,
-                                  vmid: vm.vmid,
-                                  vmName: vm.name,
-                                })
-                              }
-                              disabled={
-                                !canAccessConsole || vm.status !== "running"
-                              }
-                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-20 disabled:hover:bg-emerald-600 text-white font-medium rounded-lg text-xs inline-flex items-center gap-1.5 shadow-sm"
-                            >
-                              <Terminal className="w-3.5 h-3.5" /> Console
-                            </button>
+                            {canAccessConsole && vm.status === "running" ? (
+                              <button
+                                onClick={() =>
+                                  setActiveTerminal({
+                                    node: vm.node,
+                                    vmType: vm.type,
+                                    vmid: vm.vmid,
+                                    vmName: vm.name,
+                                  })
+                                }
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg text-xs inline-flex items-center gap-1.5 shadow-sm"
+                              >
+                                <Terminal className="w-3.5 h-3.5" /> Console
+                              </button>
+                            ) : (
+                              <button
+                                disabled
+                                title="Console is restricted to SuperAdmin"
+                                className="px-2.5 py-1 bg-zinc-800/40 text-zinc-600 border border-zinc-800 rounded-lg text-xs inline-flex items-center gap-1.5 cursor-not-allowed opacity-60"
+                              >
+                                <Lock className="w-3 h-3" /> Console
+                              </button>
+                            )}
+
                             {canControlPower ? (
                               vm.status === "running" ? (
                                 <button
@@ -1769,7 +1791,8 @@ export default function App() {
                             ) : (
                               <button
                                 disabled
-                                className="p-1.5 bg-zinc-800/40 text-zinc-600 rounded-lg border border-zinc-800"
+                                title="Power controls restricted to SuperAdmin"
+                                className="p-1.5 bg-zinc-800/40 text-zinc-600 rounded-lg border border-zinc-800 cursor-not-allowed opacity-60"
                               >
                                 <Lock className="w-3.5 h-3.5" />
                               </button>
@@ -1927,7 +1950,8 @@ export default function App() {
                         <span
                           className={`w-1.5 h-1.5 rounded-full ${iface.active ? "bg-emerald-400" : "bg-zinc-600"}`}
                         />
-                        <strong>{iface.name}</strong> ({iface.address})
+                        <strong>{iface.name}</strong> ({formatIp(iface.address)}
+                        )
                       </span>
                     ))}
                   </div>
@@ -2077,7 +2101,9 @@ export default function App() {
                     {meshState?.local.node_name || "pve-server"}
                   </strong>
                   <span className="text-[11px] text-emerald-400 mt-0.5 block">
-                    {meshState?.local.tailscale_ip || "Wazuh-LXC"}
+                    {formatIp(
+                      meshState?.local.tailscale_ip || "100.116.163.29",
+                    )}
                   </span>
                 </div>
 
@@ -2158,7 +2184,7 @@ export default function App() {
                             {peer.hostname}
                           </td>
                           <td className="px-6 py-4 text-emerald-400">
-                            {peer.tailscale_ip}
+                            {formatIp(peer.tailscale_ip)}
                           </td>
                           <td className="px-6 py-4 text-zinc-400">{peer.os}</td>
                           <td className="px-6 py-4">
@@ -2173,7 +2199,7 @@ export default function App() {
                             </span>
                           </td>
                           <td className="px-6 py-4 text-zinc-300">
-                            {peer.endpoint}
+                            {formatEndpoint(peer.endpoint)}
                           </td>
                           <td className="px-6 py-4 text-right text-zinc-400">
                             <span className="inline-flex items-center gap-1 text-emerald-400 mr-2">
@@ -2192,7 +2218,7 @@ export default function App() {
                 </table>
               </div>
 
-              {/* ================= TELEMETRY & NETWORK LEGEND ================= */}
+              {/* Protocol Legend */}
               <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 space-y-4">
                 <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
                   <div className="flex items-center gap-2">
@@ -2207,7 +2233,6 @@ export default function App() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-xs font-mono">
-                  {/* Item 1: DERP */}
                   <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded font-bold text-[10px]">
@@ -2225,7 +2250,6 @@ export default function App() {
                     </p>
                   </div>
 
-                  {/* Item 2: Direct */}
                   <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded font-bold text-[10px]">
@@ -2244,7 +2268,6 @@ export default function App() {
                     </p>
                   </div>
 
-                  {/* Item 3: Regional Relays */}
                   <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="px-2 py-0.5 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded font-bold text-[10px]">
@@ -2274,7 +2297,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Item 4: CGNAT IP */}
                   <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded font-bold text-[10px]">
@@ -2292,7 +2314,6 @@ export default function App() {
                     </p>
                   </div>
 
-                  {/* Item 5: Endpoints & Handshakes */}
                   <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="px-2 py-0.5 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded font-bold text-[10px]">
@@ -2304,13 +2325,12 @@ export default function App() {
                     </div>
                     <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
                       Format: <code className="text-emerald-400">IP:Port</code>.
-                      Indicates the actual physical layer address negotiated
-                      between WireGuard crypto-routers. Transitions to DERP
-                      fallback only if stateful firewall inspects or drops UDP.
+                      Indicates the physical socket negotiated between WireGuard
+                      crypto-routers. In Guest mode, host IPs are sanitized for
+                      security.
                     </p>
                   </div>
 
-                  {/* Item 6: Tailscale Serve */}
                   <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded font-bold text-[10px]">
@@ -2383,14 +2403,23 @@ export default function App() {
                         {svc.uptime_pct}%
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <a
-                          href={svc.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-xs text-indigo-400 hover:underline inline-flex items-center gap-1 font-mono"
-                        >
-                          :{svc.port} <ExternalLink className="w-3 h-3" />
-                        </a>
+                        {isSuperAdmin ? (
+                          <a
+                            href={svc.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-indigo-400 hover:underline inline-flex items-center gap-1 font-mono"
+                          >
+                            :{svc.port} <ExternalLink className="w-3 h-3" />
+                          </a>
+                        ) : (
+                          <span
+                            title="Direct link restricted to SuperAdmin"
+                            className="text-xs text-zinc-600 inline-flex items-center gap-1 font-mono cursor-not-allowed opacity-60"
+                          >
+                            <Lock className="w-3 h-3" /> :{svc.port}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -2418,7 +2447,6 @@ export default function App() {
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
-                  {/* Node / Container Pill Filter */}
                   <div className="flex items-center gap-1 bg-[#18181b] p-1 rounded-xl border border-zinc-800">
                     {monitoredNodes.map((nodeName) => (
                       <button
@@ -2435,7 +2463,6 @@ export default function App() {
                     ))}
                   </div>
 
-                  {/* Severity Filter */}
                   <select
                     value={securitySeverityFilter}
                     onChange={(e) => setSecuritySeverityFilter(e.target.value)}
@@ -2551,7 +2578,7 @@ export default function App() {
                     />
                   </button>
 
-                  {currentUser.role === "SuperAdmin" && (
+                  {isSuperAdmin && (
                     <button
                       onClick={() => setIsCreatingUpgrade(true)}
                       className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 shadow-sm"
@@ -2562,7 +2589,7 @@ export default function App() {
                 </div>
               </div>
 
-              {isCreatingUpgrade && currentUser.role === "SuperAdmin" && (
+              {isCreatingUpgrade && isSuperAdmin && (
                 <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
                     Submit Hardware/Software Expansion Requirement
@@ -2703,7 +2730,7 @@ export default function App() {
                       <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-500 font-mono">
                         <span>By: {upg.requested_by}</span>
                         <div className="flex items-center gap-2">
-                          {currentUser.role === "SuperAdmin" && (
+                          {isSuperAdmin ? (
                             <>
                               <button
                                 onClick={() =>
@@ -2726,6 +2753,10 @@ export default function App() {
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </>
+                          ) : (
+                            <span className="text-[10px] text-zinc-600 font-mono flex items-center gap-1">
+                              <Lock className="w-2.5 h-2.5" /> Read-Only
+                            </span>
                           )}
                         </div>
                       </div>
@@ -2764,7 +2795,7 @@ export default function App() {
                     />
                   </button>
 
-                  {currentUser.role === "SuperAdmin" && (
+                  {isSuperAdmin && (
                     <button
                       onClick={() => setIsCreatingEvent(true)}
                       className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 shadow-sm"
@@ -2775,7 +2806,7 @@ export default function App() {
                 </div>
               </div>
 
-              {isCreatingEvent && currentUser.role === "SuperAdmin" && (
+              {isCreatingEvent && isSuperAdmin && (
                 <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
                     Schedule Maintenance Window (Pushes to Notion)
@@ -2934,7 +2965,7 @@ export default function App() {
                           </strong>
                         </span>
                         <div className="flex items-center gap-2">
-                          {currentUser.role === "SuperAdmin" && (
+                          {isSuperAdmin ? (
                             <>
                               <button
                                 onClick={() =>
@@ -2959,6 +2990,10 @@ export default function App() {
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </>
+                          ) : (
+                            <span className="text-[10px] text-zinc-600 font-mono flex items-center gap-1">
+                              <Lock className="w-2.5 h-2.5" /> Read-Only
+                            </span>
                           )}
                         </div>
                       </div>
@@ -3013,7 +3048,7 @@ export default function App() {
                       className={`w-3.5 h-3.5 ${isNotesLoading ? "animate-spin text-emerald-400" : ""}`}
                     />
                   </button>
-                  {currentUser.role === "SuperAdmin" && (
+                  {isSuperAdmin && (
                     <button
                       onClick={() => setIsCreatingNote(true)}
                       className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 shadow-sm"
@@ -3024,7 +3059,7 @@ export default function App() {
                 </div>
               </div>
 
-              {isCreatingNote && currentUser.role === "SuperAdmin" && (
+              {isCreatingNote && isSuperAdmin && (
                 <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
                     Add New Runbook to Notion Database
@@ -3207,14 +3242,24 @@ export default function App() {
                         <span className="text-[10px] font-mono text-zinc-500">
                           External Ingress
                         </span>
-                        <a
-                          href={app.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="px-3 py-1.5 bg-zinc-900 hover:bg-emerald-600/20 hover:text-emerald-300 border border-zinc-800 hover:border-emerald-500/30 text-zinc-300 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-all"
-                        >
-                          Launch <ExternalLink className="w-3 h-3" />
-                        </a>
+                        {isSuperAdmin ? (
+                          <a
+                            href={app.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-3 py-1.5 bg-zinc-900 hover:bg-emerald-600/20 hover:text-emerald-300 border border-zinc-800 hover:border-emerald-500/30 text-zinc-300 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-all"
+                          >
+                            Launch <ExternalLink className="w-3 h-3" />
+                          </a>
+                        ) : (
+                          <button
+                            disabled
+                            title="Direct application launch is restricted to SuperAdmin"
+                            className="px-3 py-1.5 bg-zinc-800/40 text-zinc-600 border border-zinc-800 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 cursor-not-allowed opacity-60"
+                          >
+                            <Lock className="w-3 h-3" /> Launch
+                          </button>
+                        )}
                       </div>
                     </div>
                   );

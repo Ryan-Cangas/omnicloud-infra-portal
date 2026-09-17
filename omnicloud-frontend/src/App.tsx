@@ -745,7 +745,7 @@ export default function App() {
     {
       name: "Wazuh SIEM Manager",
       category: "Threat Detection & Auditing",
-      url: "https:wazuh.exocomet-gamut.ts.net",
+      url: "https://wazuh.exocomet-gamut.ts.net",
       port: 8443,
       status: "Healthy",
       latency_ms: 4,
@@ -968,7 +968,7 @@ export default function App() {
     setIsAuthenticating(true);
     setLoginError("");
     try {
-      const res = await fetch("http://localhost:8000/api/v1/auth/login", {
+      const res = await fetch("/api/v1/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1000,7 +1000,7 @@ export default function App() {
 
   useEffect(() => {
     if (authToken) {
-      fetch("http://localhost:8000/api/v1/auth/me", {
+      fetch("/api/v1/auth/me", {
         headers: { Authorization: `Bearer ${authToken}` },
       })
         .then((res) => {
@@ -1029,10 +1029,9 @@ export default function App() {
   const fetchResources = async () => {
     if (!authToken || !currentUser) return;
     try {
-      const res = await fetch(
-        "http://localhost:8000/api/v1/cluster/resources",
-        { headers: getAuthHeaders() },
-      );
+      const res = await fetch("/api/v1/cluster/resources", {
+        headers: getAuthHeaders(),
+      });
       if (res.ok) setResources(await res.json());
       else setResources([]);
     } catch (err) {}
@@ -1041,7 +1040,7 @@ export default function App() {
   const fetchTelemetry = async () => {
     if (!authToken) return;
     try {
-      const res = await fetch("http://localhost:8000/api/v1/nodes/telemetry", {
+      const res = await fetch("/api/v1/nodes/telemetry", {
         headers: getAuthHeaders(),
       });
       if (res.ok) setTelemetry(await res.json());
@@ -1052,7 +1051,7 @@ export default function App() {
     if (!authToken) return;
     setIsMeshLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/network/mesh", {
+      const res = await fetch("/api/v1/network/mesh", {
         headers: getAuthHeaders(),
       });
       if (res.ok) setMeshState(await res.json());
@@ -1066,7 +1065,7 @@ export default function App() {
     if (!authToken) return;
     setIsNotesLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/notes", {
+      const res = await fetch("/api/v1/notes", {
         headers: getAuthHeaders(),
       });
       if (res.ok) setNotes(await res.json());
@@ -1080,7 +1079,7 @@ export default function App() {
     if (!authToken) return;
     setIsUpgradesLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/upgrades", {
+      const res = await fetch("/api/v1/upgrades", {
         headers: getAuthHeaders(),
       });
       if (res.ok) setUpgrades(await res.json());
@@ -1094,12 +1093,9 @@ export default function App() {
     if (!authToken) return;
     setIsEventsLoading(true);
     try {
-      const res = await fetch(
-        "http://localhost:8000/api/v1/maintenance-events",
-        {
-          headers: getAuthHeaders(),
-        },
-      );
+      const res = await fetch("/api/v1/maintenance-events", {
+        headers: getAuthHeaders(),
+      });
       if (res.ok) setCalendarEvents(await res.json());
     } catch (err) {
     } finally {
@@ -1112,11 +1108,11 @@ export default function App() {
     setIsSecurityLoading(true);
     try {
       const [nodesRes, alertsRes] = await Promise.all([
-        fetch("http://localhost:8000/api/v1/security/nodes", {
+        fetch("/api/v1/security/nodes", {
           headers: getAuthHeaders(),
         }),
         fetch(
-          `http://localhost:8000/api/v1/security/alerts?node=${encodeURIComponent(selectedSecurityNode)}&severity=${securitySeverityFilter}`,
+          `/api/v1/security/alerts?node=${encodeURIComponent(selectedSecurityNode)}&severity=${securitySeverityFilter}`,
           { headers: getAuthHeaders() },
         ),
       ]);
@@ -1133,7 +1129,7 @@ export default function App() {
     if (!newTitle.trim() || !authToken) return;
     setIsSubmittingNote(true);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/notes", {
+      const res = await fetch("/api/v1/notes", {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1164,7 +1160,7 @@ export default function App() {
     if (!upgTitle.trim() || !authToken) return;
     setIsSubmittingUpgrade(true);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/upgrades", {
+      const res = await fetch("/api/v1/upgrades", {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1197,14 +1193,11 @@ export default function App() {
     if (!authToken || currentUser?.role !== "SuperAdmin") return;
     const nextStatus = currentStatus === "Completed" ? "Pending" : "Completed";
     try {
-      const res = await fetch(
-        `http://localhost:8000/api/v1/upgrades/${id}/status`,
-        {
-          method: "PATCH",
-          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-          body: JSON.stringify({ status: nextStatus }),
-        },
-      );
+      const res = await fetch(`/api/v1/upgrades/${id}/status`, {
+        method: "PATCH",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ status: nextStatus }),
+      });
       if (res.ok) {
         await fetchUpgrades();
       } else {
@@ -1221,7 +1214,7 @@ export default function App() {
     )
       return;
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/upgrades/${id}`, {
+      const res = await fetch(`/api/v1/upgrades/${id}`, {
         method: "DELETE",
         headers: getAuthHeaders(),
       });
@@ -1239,21 +1232,18 @@ export default function App() {
     if (!evtTitle.trim() || !authToken) return;
     setIsSubmittingEvent(true);
     try {
-      const res = await fetch(
-        "http://localhost:8000/api/v1/maintenance-events",
-        {
-          method: "POST",
-          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: evtTitle.trim(),
-            type: evtType,
-            date: evtDate,
-            time: evtTime.trim(),
-            targetNode: evtTargetNode.trim(),
-            status: "Scheduled",
-          }),
-        },
-      );
+      const res = await fetch("/api/v1/maintenance-events", {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: evtTitle.trim(),
+          type: evtType,
+          date: evtDate,
+          time: evtTime.trim(),
+          targetNode: evtTargetNode.trim(),
+          status: "Scheduled",
+        }),
+      });
       if (res.ok) {
         setEvtTitle("");
         setEvtTime("02:00 - 03:00 GST");
@@ -1275,14 +1265,11 @@ export default function App() {
     const nextStatus =
       currentStatus === "Completed" ? "Scheduled" : "Completed";
     try {
-      const res = await fetch(
-        `http://localhost:8000/api/v1/maintenance-events/${id}/status`,
-        {
-          method: "PATCH",
-          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-          body: JSON.stringify({ status: nextStatus }),
-        },
-      );
+      const res = await fetch(`/api/v1/maintenance-events/${id}/status`, {
+        method: "PATCH",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ status: nextStatus }),
+      });
       if (res.ok) {
         await fetchCalendarEvents();
       } else {
@@ -1301,13 +1288,10 @@ export default function App() {
     )
       return;
     try {
-      const res = await fetch(
-        `http://localhost:8000/api/v1/maintenance-events/${id}`,
-        {
-          method: "DELETE",
-          headers: getAuthHeaders(),
-        },
-      );
+      const res = await fetch(`/api/v1/maintenance-events/${id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
       if (res.ok) {
         await fetchCalendarEvents();
       } else {
@@ -1348,7 +1332,7 @@ export default function App() {
     setActionLoading(vmid);
     try {
       const res = await fetch(
-        `http://localhost:8000/api/v1/nodes/${node}/${vmType}/${vmid}/power/${action}`,
+        `/api/v1/nodes/${node}/${vmType}/${vmid}/power/${action}`,
         {
           method: "POST",
           headers: getAuthHeaders(),

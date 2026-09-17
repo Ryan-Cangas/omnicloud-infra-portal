@@ -33,6 +33,8 @@ import urllib3
 import websockets
 import pyotp
 from pydantic import BaseModel
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -1330,3 +1332,29 @@ def get_tailscale_mesh(user: UserContext = Depends(get_current_user)):
             }
         ]
     }
+
+# ---------------------------------------------------------------------------
+# Single-Port Production Frontend Hosting (SPA Fallback)
+# ---------------------------------------------------------------------------
+FRONTEND_DIST = Path("/opt/omnicloud/omnicloud-frontend/dist")
+
+if (FRONTEND_DIST / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="frontend-assets")
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    # Allow API endpoints and WebSockets to pass through
+    if full_path.startswith("api/") or full_path.startswith("ws/"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    
+    # Serve static files (favicon.svg, icons.svg, etc.) if they exist in dist
+    target_file = FRONTEND_DIST / full_path
+    if target_file.is_file():
+        return FileResponse(target_file)
+    
+    # Fallback to index.html for all client-side routes
+    index_file = FRONTEND_DIST / "index.html"
+    if index_file.is_file():
+        return FileResponse(index_file)
+    
+    raise HTTPException(status_code=404, detail="Frontend build not found. Run 'npm run build' inside omnicloud-frontend.")

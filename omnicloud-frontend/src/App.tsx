@@ -9,6 +9,7 @@
  * 5. Security & SIEM: Wazuh agent-isolated log feeds, dynamic node filters, and threat monitoring.
  * 6. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks, Hardware Expansions, and Maintenance Windows.
  * 7. Service Launchpad: Direct access to hosted web applications with official branding.
+ * 8. Packet Hopper Lab: Interactive SDN Circuit Simulator for visitors and guests.
  */
 
 import React, { useState, useEffect } from "react";
@@ -53,6 +54,7 @@ import {
   ArrowDownLeft,
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
+import { PacketHopperModal } from "./components/PacketHopperModal";
 
 type Role = "SuperAdmin" | "Guest";
 
@@ -730,6 +732,9 @@ export default function App() {
     vmid: number;
     vmName: string;
   } | null>(null);
+
+  // Dedicated state for the Packet Hopper interactive lab
+  const [isPacketHopperOpen, setIsPacketHopperOpen] = useState<boolean>(false);
 
   const [services] = useState<ServiceEndpoint[]>([
     {
@@ -1574,6 +1579,32 @@ export default function App() {
             </h1>
           </div>
           <div className="flex items-center gap-4">
+            {currentUser.role === "Guest" && (
+              <div className="mt-3 pt-3 border-t border-zinc-800/80">
+                <button
+                  onClick={() => setIsPacketHopperOpen(true)}
+                  className="w-full text-left p-3 bg-gradient-to-br from-emerald-950/60 via-zinc-900 to-indigo-950/40 hover:from-emerald-900/60 hover:to-indigo-900/50 border border-emerald-500/40 hover:border-emerald-400/70 rounded-xl transition-all duration-200 shadow-lg shadow-emerald-950/40 group relative overflow-hidden"
+                >
+                  {/* Subtle background ambient glow */}
+                  <div className="absolute -top-6 -right-6 w-16 h-16 bg-emerald-500/15 rounded-full blur-xl group-hover:bg-emerald-500/25 transition-all" />
+
+                  <div className="flex items-center justify-between mb-1.5 relative z-10">
+                    <span className="flex items-center gap-2 text-xs font-bold text-white group-hover:text-emerald-300 transition-colors">
+                      <Network className="w-4 h-4 text-emerald-400 animate-pulse" />
+                      Launch Packet Hopper
+                    </span>
+                    <span className="text-[9px] font-mono font-extrabold uppercase px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded shadow-sm">
+                      Play Game
+                    </span>
+                  </div>
+
+                  <p className="text-[10px] text-zinc-400 group-hover:text-zinc-300 font-sans leading-relaxed relative z-10">
+                    Explore sovereign mesh routing & NAT traversal in this
+                    interactive SDN lab.
+                  </p>
+                </button>
+              </div>
+            )}
             <div className="px-3 py-1.5 bg-zinc-800/80 border border-zinc-700/60 rounded-xl text-xs font-mono text-zinc-300">
               User:{" "}
               <span className="text-white font-bold">{currentUser.userId}</span>
@@ -1700,7 +1731,11 @@ export default function App() {
                           </td>
                           <td className="px-6 py-4">
                             <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${vm.status === "running" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-zinc-800 text-zinc-500 border border-zinc-700"}`}
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                                vm.status === "running"
+                                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                  : "bg-zinc-800 text-zinc-500 border border-zinc-700"
+                              }`}
                             >
                               {vm.status}
                             </span>
@@ -2064,15 +2099,25 @@ export default function App() {
                   </p>
                 </div>
 
-                <button
-                  onClick={fetchMeshState}
-                  disabled={isMeshLoading}
-                  className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white rounded-xl transition-colors self-start md:self-auto"
-                >
-                  <RotateCcw
-                    className={`w-3.5 h-3.5 ${isMeshLoading ? "animate-spin text-emerald-400" : ""}`}
-                  />
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setIsPacketHopperOpen(true)}
+                    className="px-3 py-2 bg-gradient-to-r from-emerald-500/10 to-indigo-500/10 hover:from-emerald-500/20 hover:to-indigo-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-semibold rounded-xl flex items-center gap-2 transition-all shadow-sm"
+                  >
+                    <Network className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />{" "}
+                    Test Mesh in Packet Hopper
+                  </button>
+
+                  <button
+                    onClick={fetchMeshState}
+                    disabled={isMeshLoading}
+                    className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white rounded-xl transition-colors self-start md:self-auto"
+                  >
+                    <RotateCcw
+                      className={`w-3.5 h-3.5 ${isMeshLoading ? "animate-spin text-emerald-400" : ""}`}
+                    />
+                  </button>
+                </div>
               </div>
 
               {/* Status Header Metrics */}
@@ -3254,6 +3299,7 @@ export default function App() {
         </main>
       </div>
 
+      {/* Terminal Modal for SuperAdmin VNC */}
       {activeTerminal && authToken && (
         <VncTerminal
           node={activeTerminal.node}
@@ -3264,6 +3310,12 @@ export default function App() {
           onClose={() => setActiveTerminal(null)}
         />
       )}
+
+      {/* Packet Hopper Educational SDN Simulator */}
+      <PacketHopperModal
+        isOpen={isPacketHopperOpen}
+        onClose={() => setIsPacketHopperOpen(false)}
+      />
     </div>
   );
 }

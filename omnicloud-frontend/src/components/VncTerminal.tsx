@@ -24,7 +24,14 @@ interface VncTerminalProps {
   onClose: () => void;
 }
 
-export function VncTerminal({ vmid, vmName, onClose }: VncTerminalProps) {
+export function VncTerminal({
+  node,
+  vmType,
+  vmid,
+  vmName,
+  authToken,
+  onClose,
+}: VncTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<any>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -43,30 +50,70 @@ export function VncTerminal({ vmid, vmName, onClose }: VncTerminalProps) {
 
   const connectVnc = async () => {
     if (!containerRef.current) return;
-
     setStatus("connecting");
 
     try {
-      // Use 'host' instead of 'hostname' to automatically inherit the correct port
-      // from the browser's address bar (e.g., standard 443 for Tailscale Funnel)
       const host = window.location.host;
       const protocol = window.location.protocol;
       const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
 
-      // Use a relative path for the fetch call so the browser resolves the origin automatically
-      const response = await fetch("/api/vm/" + vmid + "/vnc");
+      // STEP 1: Request 30-second ephemeral console token
+      const tokenResponse = await fetch("/api/v1/auth/console-token", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + authToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          node: node,
+          vm_type: vmType,
+          vmid: vmid,
+        }),
+      });
 
-      if (!response.ok) {
-        throw new Error("Failed to get VNC token");
-      }
+      if (!tokenResponse.ok)
+        throw new Error("Failed to get ephemeral console token");
+      const tokenData = await tokenResponse.json();
+      const consoleToken = tokenData.console_token;
 
-      const data = await response.json();
-      const token = data.token;
+      // STEP 2: Request Proxmox VNC proxy tickets
+      const proxyResponse = await fetch(
+        "/api/v1/nodes/" + node + "/" + vmType + "/" + vmid + "/vncproxy",
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer " + authToken,
+            "Content-Type": "application/json",
+          },
+        },
+      );
 
-      // Concatenating the final WebSocket URL without a hardcoded port
+      if (!proxyResponse.ok)
+        throw new Error("Failed to get Proxmox VNC ticket");
+      const proxyData = await proxyResponse.json();
+
+      // STEP 3: Construct the custom OmniCloud WebSocket URL with all required query params
+      const wsParams = new URLSearchParams({
+        port: proxyData.port.toString(),
+        ticket: proxyData.ticket,
+        session_ticket: proxyData.session_ticket,
+        auth_token: consoleToken,
+      });
+
       const wsUrl =
-        wsProtocol + "//" + host + "/api/vm/" + vmid + "/vnc/ws?token=" + token;
+        wsProtocol +
+        "//" +
+        host +
+        "/api/v1/ws/vnc/" +
+        node +
+        "/" +
+        vmType +
+        "/" +
+        vmid +
+        "?" +
+        wsParams.toString();
 
+      // Initialize noVNC
       const rfb = new RFB(containerRef.current, wsUrl, {
         credentials: { password: "" },
       });

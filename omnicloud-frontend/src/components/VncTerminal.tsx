@@ -115,7 +115,7 @@ export function VncTerminal({
 
       // Initialize noVNC
       const rfb = new RFB(containerRef.current, wsUrl, {
-        credentials: { password: "" },
+        credentials: { password: proxyData.ticket },
       });
 
       rfbRef.current = rfb;

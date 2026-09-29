@@ -42,7 +42,6 @@ export function VncTerminal({ vmid, vmName, onClose }: VncTerminalProps) {
   };
 
   const connectVnc = async () => {
-    // 1. Changed terminalRef to containerRef to match your useRef declaration
     if (!containerRef.current) return;
 
     setStatus("connecting");
@@ -52,26 +51,33 @@ export function VncTerminal({ vmid, vmName, onClose }: VncTerminalProps) {
       const protocol = window.location.protocol;
       const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
 
-      const baseUrl = `\({protocol}//\){host}:8000`;
+      // Using foolproof string concatenation (+) instead of template literals
+      const baseUrl = protocol + "//" + host + ":8000";
 
-      // 2. Changed vmId to vmid to match the component props
-      const response = await fetch(`\({baseUrl}/api/vm/\){vmid}/vnc`);
+      const response = await fetch(baseUrl + "/api/vm/" + vmid + "/vnc");
       if (!response.ok) {
         throw new Error("Failed to get VNC token");
       }
+
       const data = await response.json();
       const token = data.token;
 
-      const wsUrl = `\({wsProtocol}//\){host}:8000/api/vm/\({vmid}/vnc/ws?token=\){token}`;
+      // Concatenating the final WebSocket URL
+      const wsUrl =
+        wsProtocol +
+        "//" +
+        host +
+        ":8000/api/vm/" +
+        vmid +
+        "/vnc/ws?token=" +
+        token;
 
-      // 3. Changed terminalRef to containerRef here as well
       const rfb = new RFB(containerRef.current, wsUrl, {
         credentials: { password: "" },
       });
 
       rfbRef.current = rfb;
 
-      // Add your event listeners back
       rfb.addEventListener("connect", () => {
         clearDisconnectTimer();
         setStatus("connected");
@@ -86,8 +92,6 @@ export function VncTerminal({ vmid, vmName, onClose }: VncTerminalProps) {
           );
         }, 2000);
       });
-
-      // 4. Added the missing catch block to close the try statement
     } catch (err: any) {
       setStatus("error");
       setErrorMessage(err.message || "Failed to establish VNC connection");

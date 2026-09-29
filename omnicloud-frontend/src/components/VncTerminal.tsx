@@ -24,14 +24,7 @@ interface VncTerminalProps {
   onClose: () => void;
 }
 
-export function VncTerminal({
-  node,
-  vmType,
-  vmid,
-  vmName,
-  authToken,
-  onClose,
-}: VncTerminalProps) {
+export function VncTerminal({ vmid, vmName, onClose }: VncTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<any>(null);
   const disconnectTimerRef = useRef<number | null>(null);

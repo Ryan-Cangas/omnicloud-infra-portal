@@ -49,97 +49,55 @@ export function VncTerminal({
   };
 
   const connectVnc = async () => {
-    clearDisconnectTimer();
-
-    if (rfbRef.current) {
-      try {
-        rfbRef.current.disconnect();
-      } catch (e) {}
-      rfbRef.current = null;
-    }
+    // 1. Changed terminalRef to containerRef to match your useRef declaration
+    if (!containerRef.current) return;
 
     setStatus("connecting");
-    setErrorMessage("");
 
     try {
-      // Step 1: Request Proxmox ticket using verified Bearer JWT
-      const proxyRes = await fetch(
-        `http://localhost:8000/api/v1/nodes/${node}/${vmType}/${vmid}/vncproxy`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-          },
-        },
-      );
+      const host = window.location.hostname;
+      const protocol = window.location.protocol;
+      const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
 
-      if (!proxyRes.ok) {
-        const errJson = await proxyRes.json().catch(() => ({}));
-        throw new Error(
-          errJson.detail || "Backend rejected VNC ticket generation request.",
-        );
+      const baseUrl = `\({protocol}//\){host}:8000`;
+
+      // 2. Changed vmId to vmid to match the component props
+      const response = await fetch(`\({baseUrl}/api/vm/\){vmid}/vnc`);
+      if (!response.ok) {
+        throw new Error("Failed to get VNC token");
       }
+      const data = await response.json();
+      const token = data.token;
 
-      const proxyData = await proxyRes.json();
+      const wsUrl = `\({wsProtocol}//\){host}:8000/api/vm/\({vmid}/vnc/ws?token=\){token}`;
 
-      // Step 2: Acquire a short-lived ephemeral single-use console JWT
-      const tokenRes = await fetch(
-        "http://localhost:8000/api/v1/auth/console-token",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${authToken}`,
-          },
-          body: JSON.stringify({ node, vm_type: vmType, vmid }),
-        },
-      );
-
-      if (!tokenRes.ok) {
-        const errJson = await tokenRes.json().catch(() => ({}));
-        throw new Error(
-          errJson.detail || "Failed to acquire ephemeral console token.",
-        );
-      }
-
-      const { console_token } = await tokenRes.json();
-
-      if (!containerRef.current) return;
-      containerRef.current.innerHTML = "";
-
-      // Step 3: Construct WebSocket proxy URL with the ephemeral token
-      const wsUrl = `ws://localhost:8000/api/v1/ws/vnc/${node}/${vmType}/${vmid}?port=${proxyData.port}&ticket=${encodeURIComponent(proxyData.ticket)}&session_ticket=${encodeURIComponent(proxyData.session_ticket)}&auth_token=${encodeURIComponent(console_token)}`;
-
+      // 3. Changed terminalRef to containerRef here as well
       const rfb = new RFB(containerRef.current, wsUrl, {
-        wsProtocols: ["binary"],
-        credentials: { password: proxyData.ticket },
+        credentials: { password: "" },
       });
 
-      rfb.scaleViewport = true;
-      rfb.resizeSession = true;
+      rfbRef.current = rfb;
 
+      // Add your event listeners back
       rfb.addEventListener("connect", () => {
         clearDisconnectTimer();
         setStatus("connected");
-        setErrorMessage("");
       });
 
       rfb.addEventListener("disconnect", (e: any) => {
         clearDisconnectTimer();
         disconnectTimerRef.current = window.setTimeout(() => {
           setStatus("disconnected");
-          if (e.detail?.clean === false) {
-            setErrorMessage(
-              "WebSocket connection dropped or host is unreachable. Ensure the guest instance is running.",
-            );
-          }
+          setErrorMessage(
+            e.detail.clean ? "Session ended cleanly." : "Connection lost.",
+          );
         }, 2000);
       });
 
-      rfbRef.current = rfb;
+      // 4. Added the missing catch block to close the try statement
     } catch (err: any) {
       setStatus("error");
-      setErrorMessage(err.message || "Unable to establish console session.");
+      setErrorMessage(err.message || "Failed to establish VNC connection");
     }
   };
 

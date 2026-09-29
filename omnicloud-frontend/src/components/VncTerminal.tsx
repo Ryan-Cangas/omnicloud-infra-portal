@@ -47,14 +47,15 @@ export function VncTerminal({ vmid, vmName, onClose }: VncTerminalProps) {
     setStatus("connecting");
 
     try {
-      const host = window.location.hostname;
+      // Use 'host' instead of 'hostname' to automatically inherit the correct port
+      // from the browser's address bar (e.g., standard 443 for Tailscale Funnel)
+      const host = window.location.host;
       const protocol = window.location.protocol;
       const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
 
-      // Using foolproof string concatenation (+) instead of template literals
-      const baseUrl = protocol + "//" + host + ":8000";
+      // Use a relative path for the fetch call so the browser resolves the origin automatically
+      const response = await fetch("/api/vm/" + vmid + "/vnc");
 
-      const response = await fetch(baseUrl + "/api/vm/" + vmid + "/vnc");
       if (!response.ok) {
         throw new Error("Failed to get VNC token");
       }
@@ -62,15 +63,9 @@ export function VncTerminal({ vmid, vmName, onClose }: VncTerminalProps) {
       const data = await response.json();
       const token = data.token;
 
-      // Concatenating the final WebSocket URL
+      // Concatenating the final WebSocket URL without a hardcoded port
       const wsUrl =
-        wsProtocol +
-        "//" +
-        host +
-        ":8000/api/vm/" +
-        vmid +
-        "/vnc/ws?token=" +
-        token;
+        wsProtocol + "//" + host + "/api/vm/" + vmid + "/vnc/ws?token=" + token;
 
       const rfb = new RFB(containerRef.current, wsUrl, {
         credentials: { password: "" },

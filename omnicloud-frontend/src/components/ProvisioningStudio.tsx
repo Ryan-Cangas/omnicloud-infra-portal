@@ -97,7 +97,14 @@ export function ProvisioningStudio({ authToken }: ProvisioningStudioProps) {
       try {
         const msg = JSON.parse(event.data);
         setLogs((prev) => [...prev, msg]);
-        if (msg.type === "status") setStatus(msg.data);
+
+        if (msg.type === "status") {
+          setStatus(msg.data);
+          // Check if status message indicates completion
+          if (msg.data.includes("completed successfully")) {
+            setIsRunning(false);
+          }
+        }
         if (msg.type === "complete") {
           setStatus(`Terraform ${action.toUpperCase()} Succeeded`);
           setIsRunning(false);
@@ -117,7 +124,8 @@ export function ProvisioningStudio({ authToken }: ProvisioningStudioProps) {
     };
 
     ws.onclose = () => {
-      if (isRunning) setIsRunning(false);
+      // Always reset execution state when socket closes
+      setIsRunning(false);
     };
   };
 

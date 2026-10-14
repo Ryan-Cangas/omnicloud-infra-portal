@@ -266,7 +266,7 @@ async def run_subprocess_stream(cmd: list[str], cwd: str, websocket: WebSocket):
     )
 
     while True:
-        line = await process.stdout.readLine()
+        line = await process.stdout.readline()
         if not line:
             break
         decoded_line = line.decode("utf-8")

@@ -10,6 +10,7 @@
  * 6. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks, Hardware Expansions, and Maintenance Windows.
  * 7. Service Launchpad: Direct access to hosted web applications with official branding.
  * 8. Packet Hopper Lab: Interactive SDN Circuit Simulator for visitors and guests.
+ * 9. Provisioning & GitOps: Live Terraform and Ansible asynchronous execution studio.
  */
 
 import React, { useState, useEffect } from "react";
@@ -55,6 +56,7 @@ import {
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
 import { PacketHopperModal } from "./components/PacketHopperModal";
+import { ProvisioningStudio } from "./components/ProvisioningStudio";
 
 type Role = "SuperAdmin" | "Guest";
 
@@ -702,6 +704,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<
     | "overview"
     | "analytics"
+    | "provisioning"
     | "mesh"
     | "services"
     | "security"
@@ -1385,6 +1388,7 @@ export default function App() {
   const navItems = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
     { id: "analytics", label: "Host Telemetry", icon: BarChart3 },
+    { id: "provisioning", label: "Provisioning & GitOps", icon: Cpu },
     { id: "mesh", label: "SDN Tailscale Mesh", icon: Network },
     { id: "services", label: "Service Catalog", icon: Globe },
     { id: "security", label: "Security & SIEM", icon: ShieldCheck },
@@ -1565,17 +1569,19 @@ export default function App() {
             <h1 className="text-lg font-bold text-white tracking-tight capitalize">
               {activeTab === "upgrades"
                 ? "Hardware & Software Expansion"
-                : activeTab === "services"
-                  ? "Service Catalog & Health Matrix"
-                  : activeTab === "security"
-                    ? "Security Telemetry & SIEM Feed"
-                    : activeTab === "mesh"
-                      ? "SDN Tailscale Mesh Network"
-                      : activeTab === "calendar"
-                        ? "Scheduled Maintenance Windows"
-                        : activeTab === "analytics"
-                          ? "Host Bare-Metal Telemetry"
-                          : activeTab}
+                : activeTab === "provisioning"
+                  ? "Provisioning & GitOps Engine"
+                  : activeTab === "services"
+                    ? "Service Catalog & Health Matrix"
+                    : activeTab === "security"
+                      ? "Security Telemetry & SIEM Feed"
+                      : activeTab === "mesh"
+                        ? "SDN Tailscale Mesh Network"
+                        : activeTab === "calendar"
+                          ? "Scheduled Maintenance Windows"
+                          : activeTab === "analytics"
+                            ? "Host Bare-Metal Telemetry"
+                            : activeTab}
             </h1>
           </div>
           <div className="flex items-center gap-4">
@@ -1585,7 +1591,6 @@ export default function App() {
                   onClick={() => setIsPacketHopperOpen(true)}
                   className="w-full text-left p-3 bg-gradient-to-br from-emerald-950/60 via-zinc-900 to-indigo-950/40 hover:from-emerald-900/60 hover:to-indigo-900/50 border border-emerald-500/40 hover:border-emerald-400/70 rounded-xl transition-all duration-200 shadow-lg shadow-emerald-950/40 group relative overflow-hidden"
                 >
-                  {/* Subtle background ambient glow */}
                   <div className="absolute -top-6 -right-6 w-16 h-16 bg-emerald-500/15 rounded-full blur-xl group-hover:bg-emerald-500/25 transition-all" />
 
                   <div className="flex items-center justify-between mb-1.5 relative z-10">
@@ -2079,6 +2084,11 @@ export default function App() {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* ================= PROVISIONING & GITOPS STUDIO ================= */}
+          {activeTab === "provisioning" && (
+            <ProvisioningStudio authToken={authToken} />
           )}
 
           {/* ================= SDN TAILSCALE MESH NETWORK ================= */}

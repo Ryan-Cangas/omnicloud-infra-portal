@@ -26,6 +26,7 @@ from typing import Optional, List
 from collections import deque
 from pathlib import Path
 import time
+import glob
 
 import jwt
 import bcrypt
@@ -203,6 +204,27 @@ class UpdateMaintenanceStatusRequest(BaseModel):
 
 security_scheme = HTTPBearer(auto_error=False)
 
+# Dynamic Playbook Discovery for scanning Ansible playbooks in the infra/ansible directory
+@app.get("/api/v1/provision/playbooks")
+async def list_playbooks(user: dict = Depends(get_current_user)):
+    """Dynamically scan INFRA_DIR for Ansible playbook files."""
+    if not os.path.exists(INFRA_DIR):
+        return []
+
+    # Find all .yml and .yaml files in the root infra directory
+    playbook_files = []
+    for ext in ("*.yml", "*.yaml"):
+        playbook_files.extend(glob.glob(os.path.join(INFRA_DIR, ext)))
+
+    # Extract just the filenames without the full path
+    playbooks = [
+        os.path.basename(f) 
+        for f in playbook_files 
+        if not os.path.basename(f).startswith(".")
+    ]
+
+    return sorted(playbooks)
+
 # Helper for async execution and real-time streaming of subprocess output to WebSocket clients
 async def run_subprocess_stream(cmd: list[str], cwd: str, websocket: WebSocket):
     process = await asyncio.create_subprocess_exec(
@@ -271,14 +293,15 @@ async def ws_ansible_provision(websocket: WebSocket):
     try:
         init_data = await websocket.receive_text()
         params = json.loads(init_data)
-        playbook = params.get("playbook", "site.yml")
+        playbook = params.get("playbook", "seerr-playbook.yml")
         target_ip = params.get("target_ip")
 
-        playbook_path = os.path.join(INFRA_DIR, "ansible", playbook)
+        # Playbooks sit directly in INFRA_DIR
+        playbook_path = os.path.join(INFRA_DIR, playbook)
         cmd = [ANSIBLE_BIN, "-i", f"{target_ip},", playbook_path, "-e", f"target_host={target_ip}"]
 
         await websocket.send_text(json.dumps({"type": "status", "data": f"Running Ansible playbook {playbook} on {target_ip}..."}))
-        rc = await run_subprocess_stream(cmd, cwd=os.path.join(INFRA_DIR, "ansible"), websocket=websocket)
+        rc = await run_subprocess_stream(cmd, cwd=INFRA_DIR, websocket=websocket)
 
         if rc == 0:
             await websocket.send_text(json.dumps({"type": "complete", "data": "Ansible configuration completed."}))

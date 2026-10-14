@@ -23,7 +23,11 @@ export function ProvisioningStudio({ authToken }: ProvisioningStudioProps) {
   const [hostname, setHostname] = useState<string>("prod-k3s-worker-01");
   const [cores, setCores] = useState<number>(2);
   const [memory, setMemory] = useState<number>(2048);
-  const [playbook, setPlaybook] = useState<string>("site.yml");
+
+  // Dynamic Playbooks State
+  const [playbooks, setPlaybooks] = useState<string[]>([]);
+  const [selectedPlaybook, setSelectedPlaybook] = useState<string>("");
+  const [isLoadingPlaybooks, setIsLoadingPlaybooks] = useState<boolean>(true);
 
   const [logs, setLogs] = useState<{ type: string; data: string }[]>([]);
   const [isRunning, setIsRunning] = useState<boolean>(false);
@@ -38,6 +42,33 @@ export function ProvisioningStudio({ authToken }: ProvisioningStudioProps) {
   useEffect(() => {
     scrollToBottom();
   }, [logs]);
+
+  // Fetch Playbooks Dynamically on Component Mount
+  useEffect(() => {
+    const fetchPlaybooks = async () => {
+      try {
+        setIsLoadingPlaybooks(true);
+        const res = await fetch("/api/v1/provision/playbooks", {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (res.ok) {
+          const files: string[] = await res.json();
+          setPlaybooks(files);
+          if (files.length > 0) {
+            setSelectedPlaybook(files[0]);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch playbooks:", err);
+      } finally {
+        setIsLoadingPlaybooks(false);
+      }
+    };
+
+    if (authToken) {
+      fetchPlaybooks();
+    }
+  }, [authToken]);
 
   const runTerraform = (action: "plan" | "apply" | "destroy") => {
     setLogs([]);
@@ -91,9 +122,10 @@ export function ProvisioningStudio({ authToken }: ProvisioningStudioProps) {
   };
 
   const runAnsible = () => {
+    if (!selectedPlaybook) return;
     setLogs([]);
     setIsRunning(true);
-    setStatus("Running Ansible Configuration Playbook...");
+    setStatus(`Running ${selectedPlaybook}...`);
 
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/ws/provision/ansible`;
@@ -102,7 +134,7 @@ export function ProvisioningStudio({ authToken }: ProvisioningStudioProps) {
     ws.onopen = () => {
       ws.send(
         JSON.stringify({
-          playbook,
+          playbook: selectedPlaybook,
           target_ip: "192.168.1.150",
           token: authToken,
         }),
@@ -243,19 +275,22 @@ export function ProvisioningStudio({ authToken }: ProvisioningStudioProps) {
                 Ansible Playbook Script
               </label>
               <select
-                value={playbook}
-                onChange={(e) => setPlaybook(e.target.value)}
-                className="w-full mt-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
+                value={selectedPlaybook}
+                onChange={(e) => setSelectedPlaybook(e.target.value)}
+                disabled={isLoadingPlaybooks || playbooks.length === 0}
+                className="w-full mt-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-emerald-500 font-mono"
               >
-                <option value="site.yml">
-                  site.yml (Base Hardening & Docker)
-                </option>
-                <option value="k3s.yml">
-                  k3s.yml (Kubernetes Cluster Node)
-                </option>
-                <option value="security.yml">
-                  security.yml (Wazuh Agent & Fail2Ban)
-                </option>
+                {isLoadingPlaybooks ? (
+                  <option value="">Scanning /opt/omnicloud/infra...</option>
+                ) : playbooks.length === 0 ? (
+                  <option value="">No .yml playbooks found in directory</option>
+                ) : (
+                  playbooks.map((pb) => (
+                    <option key={pb} value={pb}>
+                      {pb}
+                    </option>
+                  ))
+                )}
               </select>
             </div>
 
@@ -280,7 +315,7 @@ export function ProvisioningStudio({ authToken }: ProvisioningStudioProps) {
 
               <div className="grid grid-cols-2 gap-2">
                 <button
-                  disabled={isRunning}
+                  disabled={isRunning || !selectedPlaybook}
                   onClick={runAnsible}
                   className="flex items-center justify-center gap-1.5 px-3 py-2 bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/40 text-xs font-medium rounded-lg text-purple-200 transition-colors disabled:opacity-50"
                 >

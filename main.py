@@ -20,6 +20,7 @@ import asyncio
 import inspect
 import urllib.parse
 import subprocess
+import shutil
 from datetime import datetime, timedelta, timezone, date
 from typing import Optional, List
 from collections import deque
@@ -46,6 +47,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Load environment configuration overrides from local .env
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
+
+# Configuration Paths
+INFRA_DIR = os.getenv("OMNICLOUD_INFRA_DIR", "/opt/omnicloud/infra")
+TERRAFORM_BIN = shutil.which("terraform") or "/usr/local/bin/terraform"
+ANSIBLE_BIN = shutil.which("ansible-playbook") or "/usr/local/bin/ansible-playbook"
 
 PROXMOX_HOST = os.getenv("PROXMOX_HOST", "192.168.1.200")
 PROXMOX_USER = os.getenv("PROXMOX_USER", "root@pam")
@@ -143,6 +149,15 @@ USERS_DB = {
     }
 }
 
+class ProvisionRequest(BaseModel):
+    vm_type: str # "lxc" or "qemu"
+    vmid: int
+    hostname: str
+    cores: int = 2
+    memory: int = 2048
+    disk_size: int = "20G"
+    playbook: str | None = "site.yml"
+
 class UserContext:
     def __init__(self, user_id: str, role: str, name: Optional[str] = None):
         self.user_id = user_id
@@ -187,6 +202,95 @@ class UpdateMaintenanceStatusRequest(BaseModel):
     status: str
 
 security_scheme = HTTPBearer(auto_error=False)
+
+# Helper for async execution and real-time streaming of subprocess output to WebSocket clients
+async def run_subprocess_stream(cmd: list[str], cwd: str, websocket: WebSocket):
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        cwd=cwd
+    )
+
+    while True:
+        line = await process.stdout.readLine()
+        if not line:
+            break
+        decoded_line = line.decode("utf-8")
+        await websocket.send_text(json.dumps({"type": "log", "data": decoded_line}))
+    await process.wait()
+    return process.returncode
+
+# Websocket Endpoint for Live Terraform Plan/Apply Execution 
+@app.websocket("/api/v1/ws/provision/terraform")
+async def ws_terraform_provision(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        # Expect initial JSON config from frontend
+        init_data = await websocket.receive_text()
+        params = json.loads(init_data)
+        action = params.get("action", "plan") # plan, apply, destroy
+
+        tf_vars = [
+            f"-var=vmid={params.get('vmid')}",
+            f"-var=hostname={params.get('hostname')}",
+            f"-var=cores={params.get('cores')}",
+            f"-var=memory={params.get('memory')}",
+        ]
+
+        if action == "plan":
+            cmd = [TERRAFORM_BIN, "plan", "-no-color"] + tf_vars
+        elif action == "apply":
+            cmd = [TERRAFORM_BIN, "apply", "-auto-approve", "-no-color"] + tf_vars
+        elif action == "destroy":
+            cmd = [TERRAFORM_BIN, "destroy", "-auto-approve", "-no-color"] + tf_vars
+        else: 
+            await websocket.send_text(json.dumps({"type": "error", "data": "Invalid action"}))
+            await websocket.close()
+            return
+
+        await websocket.send_text(json.dumps({"type": "status", "data": f"Execution terraform {action}..."}))
+        rc = await run_subprocess_stream(cmd, cwd=INFRA_DIR, websocket=websocket)
+
+        if rc == 0:
+            await websocket.send_text(json.dumps({"type": "status", "data": f"Terraform {action} completed successfully."}))
+        else:
+            await websocket.send_text(json.dumps({"type": "error", "data": f"Terraform failed with exit code {rc}"}))
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        await websocket.send_text(json.dumps({"type": "error", "data": str(e)}))
+    finally:
+        await websocket.close()
+
+# Websocket Endpoint for Live Ansible Playbook Execution
+@app.websocket("/api/v1/ws/provision/ansible")
+async def ws_ansible_provision(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        init_data = await websocket.receive_text()
+        params = json.loads(init_data)
+        playbook = params.get("playbook", "site.yml")
+        target_ip = params.get("target_ip")
+
+        playbook_path = os.path.join(INFRA_DIR, "ansible", playbook)
+        cmd = [ANSIBLE_BIN, "-i", f"{target_ip},", playbook_path, "-e", f"target_host={target_ip}"]
+
+        await websocket.send_text(json.dumps({"type": "status", "data": f"Running Ansible playbook {playbook} on {target_ip}..."}))
+        rc = await run_subprocess_stream(cmd, cwd=os.path.join(INFRA_DIR, "ansible"), websocket=websocket)
+
+        if rc == 0:
+            await websocket.send_text(json.dumps({"type": "complete", "data": "Ansible configuration completed."}))
+        else:
+            await websocket.send_text(json.dumps({"type": "error", "data": f"Ansible failed with exit code {rc}"}))
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        await websocket.send_text(json.dumps({"type": "error", "data": str(e)}))
+    finally:
+        await websocket.close()
 
 def create_jwt_token(payload_data: dict, expires_delta: timedelta) -> str:
     """Issue cryptographically signed HS256 JWT tokens with RFC 7519 UTC timestamps."""

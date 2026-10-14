@@ -204,9 +204,40 @@ class UpdateMaintenanceStatusRequest(BaseModel):
 
 security_scheme = HTTPBearer(auto_error=False)
 
-# Dynamic Playbook Discovery for scanning Ansible playbooks in the infra/ansible directory
+def create_jwt_token(payload_data: dict, expires_delta: timedelta) -> str:
+    """Issue cryptographically signed HS256 JWT tokens with RFC 7519 UTC timestamps."""
+    payload = payload_data.copy()
+    now_utc = datetime.now(timezone.utc)
+    expire = now_utc + expires_delta
+    payload.update({"exp": expire, "iat": now_utc})
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme)) -> UserContext:
+    """Validate Bearer tokens against the symmetric JWT secret key."""
+    if not credentials or not credentials.credentials:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Bearer authentication token.")
+
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        role = payload.get("role")
+        token_type = payload.get("type", "access")
+
+        if not user_id or not role:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload structure.")
+        if token_type != "access":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type.")
+
+        return UserContext(user_id=user_id, role=role, name=payload.get("name"))
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired. Please re-authenticate.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid cryptographic token.")
+
+# Dynamic Playbook Discovery for scanning Ansible playbooks directly in INFRA_DIR
 @app.get("/api/v1/provision/playbooks")
-async def list_playbooks(user: dict = Depends(get_current_user)):
+async def list_playbooks(user: UserContext = Depends(get_current_user)):
     """Dynamically scan INFRA_DIR for Ansible playbook files."""
     if not os.path.exists(INFRA_DIR):
         return []
@@ -314,37 +345,6 @@ async def ws_ansible_provision(websocket: WebSocket):
         await websocket.send_text(json.dumps({"type": "error", "data": str(e)}))
     finally:
         await websocket.close()
-
-def create_jwt_token(payload_data: dict, expires_delta: timedelta) -> str:
-    """Issue cryptographically signed HS256 JWT tokens with RFC 7519 UTC timestamps."""
-    payload = payload_data.copy()
-    now_utc = datetime.now(timezone.utc)
-    expire = now_utc + expires_delta
-    payload.update({"exp": expire, "iat": now_utc})
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-
-def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme)) -> UserContext:
-    """Validate Bearer tokens against the symmetric JWT secret key."""
-    if not credentials or not credentials.credentials:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Bearer authentication token.")
-
-    token = credentials.credentials
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        user_id = payload.get("sub")
-        role = payload.get("role")
-        token_type = payload.get("type", "access")
-
-        if not user_id or not role:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload structure.")
-        if token_type != "access":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type.")
-
-        return UserContext(user_id=user_id, role=role, name=payload.get("name"))
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired. Please re-authenticate.")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid cryptographic token.")
 
 def enforce_vm_access(vmid: int, user: UserContext, required_action: str = "view"):
     """Enforce role-based access control policies across all endpoints."""

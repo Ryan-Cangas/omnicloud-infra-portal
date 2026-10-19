@@ -256,6 +256,25 @@ async def list_playbooks(user: UserContext = Depends(get_current_user)):
 
     return sorted(playbooks)
 
+# Execute targeted destroy operation to prevent purging entire workspace. Example. "resource_address: 'proxmox_vm.vm-101'"
+def run_targeted_terraform_destroy(resource_address: str, cwd: str = "/opt/omnicloud/infra"):
+    if not resource_address:
+        raise HTTPException(status_code=400, detail="Missing resource_address for targeted destroy.")
+    
+    cmd = ["terraform", "destroy", f"-target={resource_address}", "-auto-approve"]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return {"status": "success", "output": result.stdout}
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Terraform destroy failed: {e.stderr}")
+    
 # Helper for async execution and real-time streaming of subprocess output to WebSocket clients
 async def run_subprocess_stream(cmd: list[str], cwd: str, websocket: WebSocket):
     process = await asyncio.create_subprocess_exec(

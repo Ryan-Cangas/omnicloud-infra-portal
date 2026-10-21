@@ -18,6 +18,7 @@ import ssl
 import json
 import asyncio
 import inspect
+import sys
 import urllib.parse
 import subprocess
 import shutil
@@ -34,7 +35,7 @@ import requests
 import urllib3
 import websockets
 import pyotp
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, IPvAnyAddress
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query, status
@@ -60,7 +61,14 @@ PROXMOX_PASSWORD = os.getenv("PROXMOX_PASSWORD", "")
 PROXMOX_TOKEN_NAME = os.getenv("PROXMOX_TOKEN_NAME", "")
 PROXMOX_TOKEN_VALUE = os.getenv("PROXMOX_TOKEN_VALUE", "")
 
-JWT_SECRET = os.getenv("JWT_SECRET_KEY", "omniops-homelab-secret-key-production")
+#JWT_SECRET = os.getenv("JWT_SECRET_KEY", "4ionkj4sBacEtf1aQ*2Ne@F%@qq5*tuo")
+
+JWT_SECRET = os.getenv("JWT_SECRET_KEY")
+if not JWT_SECRET or len (JWT_SECRET) < 32:
+    sys.exit(
+        "Security Error: JWT_SECRET_KEY environment variable is missing or too short. Please set a secure key of at least 32 characters in your .env file or environment."
+    )
+
 JWT_ALGORITHM = "HS256"
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 120
 JWT_CONSOLE_TOKEN_EXPIRE_SECONDS = 30
@@ -151,13 +159,14 @@ USERS_DB = {
 }
 
 class ProvisionRequest(BaseModel):
-    vm_type: str # "lxc" or "qemu"
-    vmid: int
+    vm_type: str = Field(..., description="'lxc or qemu'")
+    vmid: int = Field(..., ge=100, le=9999)
     hostname: str
     cores: int = 2
     memory: int = 2048
-    disk_size: int = "20G"
-    playbook: str | None = "site.yml"
+    disk_size: str = "20G"
+    playbook: Optional[str] = "site.yml"
+    target_ip: IPvAnyAddress   
 
 class UserContext:
     def __init__(self, user_id: str, role: str, name: Optional[str] = None):

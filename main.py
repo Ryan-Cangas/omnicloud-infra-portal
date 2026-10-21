@@ -61,8 +61,6 @@ PROXMOX_PASSWORD = os.getenv("PROXMOX_PASSWORD", "")
 PROXMOX_TOKEN_NAME = os.getenv("PROXMOX_TOKEN_NAME", "")
 PROXMOX_TOKEN_VALUE = os.getenv("PROXMOX_TOKEN_VALUE", "")
 
-#JWT_SECRET = os.getenv("JWT_SECRET_KEY", "4ionkj4sBacEtf1aQ*2Ne@F%@qq5*tuo")
-
 JWT_SECRET = os.getenv("JWT_SECRET_KEY")
 if not JWT_SECRET or len (JWT_SECRET) < 32:
     sys.exit(

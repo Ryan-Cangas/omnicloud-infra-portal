@@ -1,18 +1,3 @@
-/**
- * OmniCloud Sovereign Homelab Operations Center
- *
- * Architecture & Modules:
- * 1. Hypervisor Gateway: Multi-guest compute inspection with isolated noVNC WebSocket consoles.
- * 2. Bare-Metal Telemetry: Real-time SVG time-series graphs for CPU, RAM, NVMe/HDD storage, and Network I/O.
- * 3. Service Catalog: Health-check matrix and latency probes across homelab containers and services.
- * 4. SDN Tailscale Mesh: Real-time peer path inspection with IP masking for guests and protocol glossary.
- * 5. Security & SIEM: Wazuh agent-isolated log feeds, dynamic node filters, and threat monitoring.
- * 6. Notion 2-Way Sync: Multi-database sync for Homelab Runbooks, Hardware Expansions, and Maintenance Windows.
- * 7. Service Launchpad: Direct access to hosted web applications with official branding.
- * 8. Packet Hopper Lab: Interactive SDN Circuit Simulator for visitors and guests.
- * 9. Provisioning & GitOps: Live Terraform and Ansible asynchronous execution studio.
- */
-
 import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard,
@@ -53,6 +38,8 @@ import {
   DownloadCloud,
   ArrowUpRight,
   ArrowDownLeft,
+  Menu,
+  X,
 } from "lucide-react";
 import { VncTerminal } from "./components/VncTerminal";
 import { PacketHopperModal } from "./components/PacketHopperModal";
@@ -308,12 +295,14 @@ function TelemetryAreaChart({
     (acc, pt, i) => `${acc} ${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`,
     "",
   );
+
   const areaD = `${pathD} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
 
   return (
     <div className="w-full relative" onMouseLeave={() => setHoveredIdx(null)}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="xMidYMid meet"
         className="w-full h-44 overflow-visible"
       >
         <defs>
@@ -322,7 +311,6 @@ function TelemetryAreaChart({
             <stop offset="100%" stopColor={color} stopOpacity="0.0" />
           </linearGradient>
         </defs>
-
         {[0, 0.25, 0.5, 0.75, 1].map((p, idx) => {
           const y = height - padding - p * (height - 2 * padding);
           return (
@@ -338,7 +326,6 @@ function TelemetryAreaChart({
             />
           );
         })}
-
         <path
           d={areaD}
           fill={`url(#${gradientId})`}
@@ -352,7 +339,6 @@ function TelemetryAreaChart({
           strokeLinecap="round"
           className="transition-all duration-500 ease-linear"
         />
-
         {points.map((pt, i) => (
           <rect
             key={`hit-${i}`}
@@ -365,7 +351,6 @@ function TelemetryAreaChart({
             onMouseEnter={() => setHoveredIdx(i)}
           />
         ))}
-
         {hoveredIdx !== null &&
           points[hoveredIdx] &&
           (() => {
@@ -373,12 +358,10 @@ function TelemetryAreaChart({
             const boxHeight = 36;
             const activeX = points[hoveredIdx].x;
             const activeY = points[hoveredIdx].y;
-
             const tooltipX =
               activeX + boxWidth + 12 > width - padding
                 ? activeX - boxWidth - 10
                 : activeX + 10;
-
             const tooltipY =
               activeY - boxHeight - 8 > padding
                 ? activeY - boxHeight - 8
@@ -438,7 +421,6 @@ function TelemetryAreaChart({
               </g>
             );
           })()}
-
         {points.length > 0 && hoveredIdx === null && (
           <>
             <circle
@@ -460,7 +442,6 @@ function TelemetryAreaChart({
           </>
         )}
       </svg>
-
       <div className="flex justify-between text-[10px] font-mono text-zinc-500 mt-1 px-2">
         <span>{points[0]?.time || ""}</span>
         <span className="text-zinc-400 font-semibold">
@@ -515,6 +496,7 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
     <div className="w-full relative" onMouseLeave={() => setHoveredIdx(null)}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="xMidYMid meet"
         className="w-full h-44 overflow-visible"
       >
         <defs>
@@ -527,7 +509,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
             <stop offset="100%" stopColor="#6366f1" stopOpacity="0.0" />
           </linearGradient>
         </defs>
-
         {[0, 0.5, 1].map((p, idx) => {
           const y = height - padding - p * (height - 2 * padding);
           return (
@@ -543,7 +524,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
             />
           );
         })}
-
         <path
           d={`${buildPath(rxPoints)} L ${rxPoints[rxPoints.length - 1].x} ${height - padding} L ${rxPoints[0].x} ${height - padding} Z`}
           fill="url(#rxGrad)"
@@ -557,7 +537,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
           strokeLinecap="round"
           className="transition-all duration-500 ease-linear"
         />
-
         <path
           d={`${buildPath(txPoints)} L ${txPoints[txPoints.length - 1].x} ${height - padding} L ${txPoints[0].x} ${height - padding} Z`}
           fill="url(#txGrad)"
@@ -572,7 +551,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
           strokeDasharray="4 2"
           className="transition-all duration-500 ease-linear"
         />
-
         {rxPoints.map((pt, i) => (
           <rect
             key={`hit-${i}`}
@@ -585,7 +563,6 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
             onMouseEnter={() => setHoveredIdx(i)}
           />
         ))}
-
         {hoveredIdx !== null &&
           rxPoints[hoveredIdx] &&
           txPoints[hoveredIdx] &&
@@ -597,13 +574,11 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
               rxPoints[hoveredIdx].y,
               txPoints[hoveredIdx].y,
             );
-
             const leftSpace = activeX - padding;
             const placeOnLeft = leftSpace > boxWidth + 15;
             const tooltipX = placeOnLeft
               ? activeX - boxWidth - 12
               : activeX + 12;
-
             const tooltipY =
               highestPeakY - boxHeight - 8 > padding
                 ? highestPeakY - boxHeight - 8
@@ -680,8 +655,7 @@ function NetworkThroughputChart({ data }: { data: TelemetrySample[] }) {
             );
           })()}
       </svg>
-
-      <div className="flex justify-between items-center text-[10px] font-mono text-zinc-500 mt-1 px-2">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-[10px] font-mono text-zinc-500 mt-1 px-2 gap-1">
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1 text-emerald-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />{" "}
@@ -720,15 +694,14 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<PersonaProfile | null>(null);
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string>("");
-
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginMfa, setLoginMfa] = useState("");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
 
   const [resources, setResources] = useState<GuestResource[]>([]);
   const [telemetry, setTelemetry] = useState<NodeTelemetry | null>(null);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
-
   const [activeTerminal, setActiveTerminal] = useState<{
     node: string;
     vmType: "qemu" | "lxc";
@@ -736,9 +709,7 @@ export default function App() {
     vmName: string;
   } | null>(null);
 
-  // Dedicated state for the Packet Hopper interactive lab
   const [isPacketHopperOpen, setIsPacketHopperOpen] = useState<boolean>(false);
-
   const [services] = useState<ServiceEndpoint[]>([
     {
       name: "Proxmox Virtual Environment",
@@ -834,7 +805,6 @@ export default function App() {
 
   const [meshState, setMeshState] = useState<TailscaleMeshState | null>(null);
   const [isMeshLoading, setIsMeshLoading] = useState<boolean>(false);
-
   const [monitoredNodes, setMonitoredNodes] = useState<string[]>([
     "All Nodes",
     "pve-server",
@@ -848,7 +818,6 @@ export default function App() {
     useState<string>("ALL");
   const [wazuhAlerts, setWazuhAlerts] = useState<SecurityAuditLog[]>([]);
   const [isSecurityLoading, setIsSecurityLoading] = useState<boolean>(false);
-
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [isEventsLoading, setIsEventsLoading] = useState<boolean>(false);
   const [isCreatingEvent, setIsCreatingEvent] = useState<boolean>(false);
@@ -862,7 +831,6 @@ export default function App() {
   const [evtTime, setEvtTime] = useState("02:00 - 03:00 GST");
   const [evtTargetNode, setEvtTargetNode] = useState("pve-server");
   const [isSubmittingEvent, setIsSubmittingEvent] = useState<boolean>(false);
-
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [selectedTag, setSelectedTag] = useState<string>("All");
   const [isNotesLoading, setIsNotesLoading] = useState<boolean>(false);
@@ -876,7 +844,6 @@ export default function App() {
     new Date().toISOString().split("T")[0],
   );
   const [isSubmittingNote, setIsSubmittingNote] = useState<boolean>(false);
-
   const [upgrades, setUpgrades] = useState<UpgradeItem[]>([]);
   const [isUpgradesLoading, setIsUpgradesLoading] = useState<boolean>(false);
   const [isCreatingUpgrade, setIsCreatingUpgrade] = useState<boolean>(false);
@@ -985,14 +952,12 @@ export default function App() {
           mfa_code: mfaCode,
         }),
       });
-
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         throw new Error(
           errData.detail || "Authentication failed. Check credentials.",
         );
       }
-
       const data = await res.json();
       localStorage.setItem("cmp_jwt_token", data.access_token);
       setAuthToken(data.access_token);
@@ -1357,7 +1322,6 @@ export default function App() {
     }
   };
 
-  // Helper for masking IPs and physical endpoints for Guests
   const formatIp = (ip: string) => {
     if (!ip) return "N/A";
     if (currentUser?.role === "SuperAdmin") return ip;
@@ -1400,8 +1364,8 @@ export default function App() {
 
   if (!authToken || !currentUser) {
     return (
-      <div className="flex h-screen items-center justify-center bg-[#0d0d0f] text-zinc-100 p-4">
-        <div className="w-full max-w-md bg-[#121214] border border-zinc-800 p-8 rounded-2xl shadow-2xl">
+      <div className="flex min-h-screen items-center justify-center bg-[#0d0d0f] text-zinc-100 p-4">
+        <div className="w-full max-w-md bg-[#121214] border border-zinc-800 p-6 sm:p-8 rounded-2xl shadow-2xl">
           <div className="flex items-center gap-3 mb-6">
             <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400">
               <KeyRound className="w-6 h-6" />
@@ -1413,13 +1377,11 @@ export default function App() {
               </p>
             </div>
           </div>
-
           {loginError && (
             <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs rounded-xl">
               {loginError}
             </div>
           )}
-
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -1449,7 +1411,7 @@ export default function App() {
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
                 className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white rounded-xl p-3 focus:outline-none focus:border-emerald-500"
-                placeholder="••••••••"
+                placeholder="••••••••••••"
                 required
               />
             </div>
@@ -1478,12 +1440,11 @@ export default function App() {
                 : "Authorize SuperAdmin"}
             </button>
           </form>
-
           <div className="mt-6 pt-6 border-t border-zinc-800">
             <button
               type="button"
               onClick={() => handleAuthenticate("guest", "password123")}
-              className="w-full py-4 bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/20 text-indigo-400 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2"
+              className="w-full py-3 sm:py-4 bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/20 text-indigo-400 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2"
             >
               <Globe className="w-4 h-4" /> Visiting Ryan's Home Server? Click
               Here
@@ -1499,9 +1460,24 @@ export default function App() {
     selectedTag === "All" ? notes : notes.filter((n) => n.tag === selectedTag);
 
   return (
-    <div className="flex h-screen bg-[#0d0d0f] text-zinc-100 font-sans antialiased overflow-hidden selection:bg-zinc-800">
-      <aside className="w-64 bg-[#121214] border-r border-zinc-800/80 flex flex-col justify-between shrink-0">
-        <div className="p-4 flex flex-col h-full">
+    <div className="flex flex-col lg:flex-row h-screen bg-[#0d0d0f] text-zinc-100 font-sans antialiased overflow-hidden selection:bg-zinc-800">
+      {/* Responsive Navigation Drawer Overlay for Mobile */}
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-black/70 z-40 lg:hidden backdrop-blur-sm"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Navigation Sidebar */}
+      <aside
+        className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-[#121214] border-r border-zinc-800/80 flex flex-col justify-between shrink-0 transform transition-transform duration-300 ease-in-out ${
+          mobileMenuOpen
+            ? "translate-x-0"
+            : "-translate-x-full lg:translate-x-0"
+        }`}
+      >
+        <div className="p-4 flex flex-col h-full overflow-y-auto">
           <div className="p-3 bg-[#18181b] border border-zinc-800 rounded-xl mb-6 shadow-sm">
             <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-2 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
@@ -1527,7 +1503,6 @@ export default function App() {
               </div>
             </div>
           </div>
-
           <div className="text-[11px] font-semibold text-zinc-500 px-3 uppercase tracking-wider mb-2">
             Navigation
           </div>
@@ -1538,7 +1513,10 @@ export default function App() {
               return (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id as any)}
+                  onClick={() => {
+                    setActiveTab(item.id as any);
+                    setMobileMenuOpen(false);
+                  }}
                   className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
                     isActive
                       ? "bg-zinc-800/90 text-white shadow-sm font-semibold"
@@ -1553,74 +1531,70 @@ export default function App() {
               );
             })}
           </nav>
-
           <button
             onClick={handleLogout}
-            className="mt-4 w-full flex items-center justify-center gap-2 px-3 py-2 bg-zinc-900 hover:bg-rose-500/10 hover:text-rose-400 border border-zinc-800 rounded-xl text-xs font-medium text-zinc-400 transition-colors"
+            className="mt-4 w-full flex items-center justify-center gap-2 px-3 py-2 bg-zinc-900 hover:bg-rose-500/10 hover:text-rose-400 border border-zinc-800 rounded-xl text-xs font-medium text-zinc-400 transition-colors shrink-0"
           >
             <LogOut className="w-3.5 h-3.5" /> Sign Out
           </button>
         </div>
       </aside>
 
+      {/* Main Content Outer Frame */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        <header className="h-16 border-b border-zinc-800/80 bg-[#121214]/60 backdrop-blur-md px-8 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-6">
-            <h1 className="text-lg font-bold text-white tracking-tight capitalize">
+        {/* Top Header Bar */}
+        <header className="h-16 border-b border-zinc-800/80 bg-[#121214]/60 backdrop-blur-md px-4 sm:px-8 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3 sm:gap-6">
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="p-2 text-zinc-400 hover:text-white lg:hidden rounded-lg hover:bg-zinc-800/50"
+            >
+              {mobileMenuOpen ? (
+                <X className="w-5 h-5" />
+              ) : (
+                <Menu className="w-5 h-5" />
+              )}
+            </button>
+            <h1 className="text-sm sm:text-lg font-bold text-white tracking-tight capitalize truncate">
               {activeTab === "upgrades"
-                ? "Hardware & Software Expansion"
+                ? "Hardware Expansion"
                 : activeTab === "provisioning"
                   ? "Provisioning & GitOps Engine"
                   : activeTab === "services"
-                    ? "Service Catalog & Health Matrix"
+                    ? "Service Catalog"
                     : activeTab === "security"
-                      ? "Security Telemetry & SIEM Feed"
+                      ? "Security Telemetry & SIEM"
                       : activeTab === "mesh"
-                        ? "SDN Tailscale Mesh Network"
+                        ? "SDN Tailscale Mesh"
                         : activeTab === "calendar"
-                          ? "Scheduled Maintenance Windows"
+                          ? "Maintenance Windows"
                           : activeTab === "analytics"
-                            ? "Host Bare-Metal Telemetry"
+                            ? "Host Telemetry"
                             : activeTab}
             </h1>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
             {currentUser.role === "Guest" && (
-              <div className="mt-3 pt-3 border-t border-zinc-800/80">
-                <button
-                  onClick={() => setIsPacketHopperOpen(true)}
-                  className="w-full text-left p-3 bg-gradient-to-br from-emerald-950/60 via-zinc-900 to-indigo-950/40 hover:from-emerald-900/60 hover:to-indigo-900/50 border border-emerald-500/40 hover:border-emerald-400/70 rounded-xl transition-all duration-200 shadow-lg shadow-emerald-950/40 group relative overflow-hidden"
-                >
-                  <div className="absolute -top-6 -right-6 w-16 h-16 bg-emerald-500/15 rounded-full blur-xl group-hover:bg-emerald-500/25 transition-all" />
-
-                  <div className="flex items-center justify-between mb-1.5 relative z-10">
-                    <span className="flex items-center gap-2 text-xs font-bold text-white group-hover:text-emerald-300 transition-colors">
-                      <Network className="w-4 h-4 text-emerald-400 animate-pulse" />
-                      Launch Packet Hopper
-                    </span>
-                    <span className="text-[9px] font-mono font-extrabold uppercase px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded shadow-sm">
-                      Play Game
-                    </span>
-                  </div>
-
-                  <p className="text-[10px] text-zinc-400 group-hover:text-zinc-300 font-sans leading-relaxed relative z-10">
-                    Explore sovereign mesh routing & NAT traversal in this
-                    interactive SDN lab.
-                  </p>
-                </button>
-              </div>
+              <button
+                onClick={() => setIsPacketHopperOpen(true)}
+                className="px-2.5 py-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
+              >
+                <Network className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                <span className="hidden sm:inline">Packet Hopper</span>
+              </button>
             )}
-            <div className="px-3 py-1.5 bg-zinc-800/80 border border-zinc-700/60 rounded-xl text-xs font-mono text-zinc-300">
+            <div className="px-2.5 sm:px-3 py-1.5 bg-zinc-800/80 border border-zinc-700/60 rounded-xl text-[10px] sm:text-xs font-mono text-zinc-300">
               User:{" "}
               <span className="text-white font-bold">{currentUser.userId}</span>
             </div>
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-8 space-y-6">
+        {/* Scrollable Container */}
+        <main className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-6">
           {activeTab === "overview" && (
             <>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
                   <div className="flex items-center justify-between text-zinc-400">
                     <span className="text-xs font-semibold">
@@ -1658,7 +1632,7 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between">
+                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between sm:col-span-2 lg:col-span-1">
                   <div className="flex items-center justify-between text-zinc-400">
                     <span className="text-xs font-semibold">
                       Network I/O Throughput
@@ -1704,128 +1678,131 @@ export default function App() {
                     No instances assigned to this workspace partition.
                   </div>
                 ) : (
-                  <table className="w-full text-left text-xs text-zinc-300">
-                    <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
-                      <tr>
-                        <th className="px-6 py-3">Workload</th>
-                        <th className="px-6 py-3">Node</th>
-                        <th className="px-6 py-3">Type</th>
-                        <th className="px-6 py-3">State</th>
-                        <th className="px-6 py-3">CPU</th>
-                        <th className="px-6 py-3">Memory</th>
-                        <th className="px-6 py-3 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800/60">
-                      {resources.map((vm) => (
-                        <tr
-                          key={vm.vmid}
-                          className="hover:bg-zinc-800/20 transition-colors"
-                        >
-                          <td className="px-6 py-4 font-medium text-white flex items-center gap-2">
-                            <span className="font-mono text-zinc-500">
-                              #{vm.vmid}
-                            </span>{" "}
-                            {vm.name}
-                          </td>
-                          <td className="px-6 py-4 text-zinc-400">{vm.node}</td>
-                          <td className="px-6 py-4">
-                            <span className="uppercase font-mono text-[10px] text-zinc-400">
-                              {vm.type}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                                vm.status === "running"
-                                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                  : "bg-zinc-800 text-zinc-500 border border-zinc-700"
-                              }`}
-                            >
-                              {vm.status}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 font-mono text-zinc-400">
-                            {vm.cpu_usage_pct}%
-                          </td>
-                          <td className="px-6 py-4 font-mono text-zinc-400">
-                            {Math.min(
-                              Math.max(vm.mem_usage_pct, 0),
-                              100,
-                            ).toFixed(2)}
-                            % ({vm.maxmem_gb} GB)
-                          </td>
-                          <td className="px-6 py-4 text-right space-x-2">
-                            {canAccessConsole && vm.status === "running" ? (
-                              <button
-                                onClick={() =>
-                                  setActiveTerminal({
-                                    node: vm.node,
-                                    vmType: vm.type,
-                                    vmid: vm.vmid,
-                                    vmName: vm.name,
-                                  })
-                                }
-                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg text-xs inline-flex items-center gap-1.5 shadow-sm"
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-zinc-300 min-w-[650px]">
+                      <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
+                        <tr>
+                          <th className="px-6 py-3">Workload</th>
+                          <th className="px-6 py-3">Node</th>
+                          <th className="px-6 py-3">Type</th>
+                          <th className="px-6 py-3">State</th>
+                          <th className="px-6 py-3">CPU</th>
+                          <th className="px-6 py-3">Memory</th>
+                          <th className="px-6 py-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-800/60">
+                        {resources.map((vm) => (
+                          <tr
+                            key={vm.vmid}
+                            className="hover:bg-zinc-800/20 transition-colors"
+                          >
+                            <td className="px-6 py-4 font-medium text-white flex items-center gap-2">
+                              <span className="font-mono text-zinc-500">
+                                #{vm.vmid}
+                              </span>{" "}
+                              {vm.name}
+                            </td>
+                            <td className="px-6 py-4 text-zinc-400">
+                              {vm.node}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="uppercase font-mono text-[10px] text-zinc-400">
+                                {vm.type}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                                  vm.status === "running"
+                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                    : "bg-zinc-800 text-zinc-500 border border-zinc-700"
+                                }`}
                               >
-                                <Terminal className="w-3.5 h-3.5" /> Console
-                              </button>
-                            ) : (
-                              <button
-                                disabled
-                                title="Console is restricted to SuperAdmin"
-                                className="px-2.5 py-1 bg-zinc-800/40 text-zinc-600 border border-zinc-800 rounded-lg text-xs inline-flex items-center gap-1.5 cursor-not-allowed opacity-60"
-                              >
-                                <Lock className="w-3 h-3" /> Console
-                              </button>
-                            )}
-
-                            {canControlPower ? (
-                              vm.status === "running" ? (
+                                {vm.status}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 font-mono text-zinc-400">
+                              {vm.cpu_usage_pct}%
+                            </td>
+                            <td className="px-6 py-4 font-mono text-zinc-400">
+                              {Math.min(
+                                Math.max(vm.mem_usage_pct, 0),
+                                100,
+                              ).toFixed(2)}
+                              % ({vm.maxmem_gb} GB)
+                            </td>
+                            <td className="px-6 py-4 text-right space-x-2">
+                              {canAccessConsole && vm.status === "running" ? (
                                 <button
                                   onClick={() =>
-                                    handlePowerAction(
-                                      vm.node,
-                                      vm.type,
-                                      vm.vmid,
-                                      "shutdown",
-                                    )
+                                    setActiveTerminal({
+                                      node: vm.node,
+                                      vmType: vm.type,
+                                      vmid: vm.vmid,
+                                      vmName: vm.name,
+                                    })
                                   }
-                                  disabled={actionLoading === vm.vmid}
-                                  className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg border border-rose-500/20"
+                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg text-xs inline-flex items-center gap-1.5 shadow-sm"
                                 >
-                                  <Square className="w-3.5 h-3.5" />
+                                  <Terminal className="w-3.5 h-3.5" /> Console
                                 </button>
                               ) : (
                                 <button
-                                  onClick={() =>
-                                    handlePowerAction(
-                                      vm.node,
-                                      vm.type,
-                                      vm.vmid,
-                                      "start",
-                                    )
-                                  }
-                                  disabled={actionLoading === vm.vmid}
-                                  className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg border border-emerald-500/20"
+                                  disabled
+                                  title="Console is restricted to SuperAdmin"
+                                  className="px-2.5 py-1 bg-zinc-800/40 text-zinc-600 border border-zinc-800 rounded-lg text-xs inline-flex items-center gap-1.5 cursor-not-allowed opacity-60"
                                 >
-                                  <Play className="w-3.5 h-3.5" />
+                                  <Lock className="w-3 h-3" /> Console
                                 </button>
-                              )
-                            ) : (
-                              <button
-                                disabled
-                                title="Power controls restricted to SuperAdmin"
-                                className="p-1.5 bg-zinc-800/40 text-zinc-600 rounded-lg border border-zinc-800 cursor-not-allowed opacity-60"
-                              >
-                                <Lock className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                              )}
+                              {canControlPower ? (
+                                vm.status === "running" ? (
+                                  <button
+                                    onClick={() =>
+                                      handlePowerAction(
+                                        vm.node,
+                                        vm.type,
+                                        vm.vmid,
+                                        "shutdown",
+                                      )
+                                    }
+                                    disabled={actionLoading === vm.vmid}
+                                    className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg border border-rose-500/20"
+                                  >
+                                    <Square className="w-3.5 h-3.5" />
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() =>
+                                      handlePowerAction(
+                                        vm.node,
+                                        vm.type,
+                                        vm.vmid,
+                                        "start",
+                                      )
+                                    }
+                                    disabled={actionLoading === vm.vmid}
+                                    className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg border border-emerald-500/20"
+                                  >
+                                    <Play className="w-3.5 h-3.5" />
+                                  </button>
+                                )
+                              ) : (
+                                <button
+                                  disabled
+                                  title="Power controls restricted to SuperAdmin"
+                                  className="p-1.5 bg-zinc-800/40 text-zinc-600 rounded-lg border border-zinc-800 cursor-not-allowed opacity-60"
+                                >
+                                  <Lock className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
             </>
@@ -1834,9 +1811,9 @@ export default function App() {
           {/* ================= HOST BARE-METAL TELEMETRY ================= */}
           {activeTab === "analytics" && (
             <div className="space-y-6">
-              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-4 sm:p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Radio className="w-4 h-4 text-emerald-400 animate-pulse" />
                     <h2 className="text-sm font-bold text-white uppercase tracking-wider">
                       Proxmox Host: {telemetry?.node || "pve-server"}
@@ -1846,12 +1823,11 @@ export default function App() {
                     </span>
                   </div>
                   <p className="text-xs text-zinc-400 mt-1 font-mono">
-                    {telemetry?.system.pve_version} • Kernel{" "}
+                    {telemetry?.system.pve_version} Kernel{" "}
                     {telemetry?.system.kernel_version}
                   </p>
                 </div>
-
-                <div className="flex items-center gap-6 text-xs font-mono text-zinc-400 bg-zinc-900/90 border border-zinc-800 px-4 py-2.5 rounded-xl">
+                <div className="flex flex-wrap items-center gap-4 sm:gap-6 text-xs font-mono text-zinc-400 bg-zinc-900/90 border border-zinc-800 px-4 py-2.5 rounded-xl w-full md:w-auto">
                   <div>
                     <span className="text-zinc-500 block text-[10px] uppercase">
                       Node Uptime
@@ -1881,7 +1857,7 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
+                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-4 sm:p-6 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
@@ -1896,11 +1872,10 @@ export default function App() {
                     </div>
                     <p className="text-xs text-zinc-500 font-mono mb-4">
                       {telemetry?.cpu.cores} Physical Cores (
-                      {telemetry?.cpu.sockets} Socket) • IO Wait:{" "}
+                      {telemetry?.cpu.sockets} Socket) IO Wait:{" "}
                       {telemetry?.cpu.iowait_pct || 0}%
                     </p>
                   </div>
-
                   <TelemetryAreaChart
                     data={telemetry?.history || []}
                     dataKey="cpu"
@@ -1911,7 +1886,7 @@ export default function App() {
                   />
                 </div>
 
-                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
+                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-4 sm:p-6 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
@@ -1926,12 +1901,11 @@ export default function App() {
                     </div>
                     <p className="text-xs text-zinc-500 font-mono mb-4">
                       {telemetry?.memory.used_gb} GB used of{" "}
-                      {telemetry?.memory.total_gb} GB total • Swap:{" "}
+                      {telemetry?.memory.total_gb} GB total Swap:{" "}
                       {telemetry?.memory.swap_used_gb} GB (
                       {telemetry?.memory.swap_pct}%)
                     </p>
                   </div>
-
                   <TelemetryAreaChart
                     data={telemetry?.history || []}
                     dataKey="memory"
@@ -1944,13 +1918,13 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
+                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-4 sm:p-6 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <Activity className="w-4 h-4 text-sky-400" />
                         <h3 className="text-sm font-bold text-white">
-                          Network Traffic & Bandwidth Usage
+                          Network Traffic & Bandwidth
                         </h3>
                       </div>
                       <span className="text-xs font-mono text-zinc-400">
@@ -1962,9 +1936,7 @@ export default function App() {
                       across bridged hypervisor interfaces
                     </p>
                   </div>
-
                   <NetworkThroughputChart data={telemetry?.history || []} />
-
                   <div className="mt-4 pt-4 border-t border-zinc-800 flex flex-wrap items-center gap-2">
                     {telemetry?.network.interfaces?.map((iface) => (
                       <span
@@ -1981,13 +1953,13 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 flex flex-col justify-between">
+                <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-4 sm:p-6 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <Layers className="w-4 h-4 text-amber-400" />
                         <h3 className="text-sm font-bold text-white">
-                          Root & Pool Storage (SSD vs. HDD)
+                          Root & Pool Storage Allocation
                         </h3>
                       </div>
                       <span className="text-xs font-mono text-zinc-400">
@@ -1995,11 +1967,10 @@ export default function App() {
                       </span>
                     </div>
                     <p className="text-xs text-zinc-500 font-mono mb-4">
-                      Storage partitions, NVMe/Flash volume allocations, and
-                      mechanical block storage
+                      Storage partitions, NVMe/Flash allocations, and block
+                      devices
                     </p>
                   </div>
-
                   <div className="space-y-4">
                     <div>
                       <div className="flex justify-between text-xs font-mono text-zinc-400 mb-1">
@@ -2019,7 +1990,6 @@ export default function App() {
                         />
                       </div>
                     </div>
-
                     <div className="space-y-2 mt-4">
                       {telemetry?.storage.pools?.map((pool) => (
                         <div
@@ -2045,15 +2015,14 @@ export default function App() {
                               </span>
                             </div>
                             <span className="text-[11px] text-zinc-400 mt-0.5 block">
-                              {pool.used_gb} GB used • {pool.free_gb} GB free
+                              {pool.used_gb} GB used {pool.free_gb} GB free
                             </span>
                           </div>
-
                           <div className="text-right">
                             <span className="text-sm font-bold text-white">
                               {pool.usage_pct}%
                             </span>
-                            <div className="w-20 bg-zinc-800 h-1.5 rounded-full mt-1 overflow-hidden">
+                            <div className="w-16 sm:w-20 bg-zinc-800 h-1.5 rounded-full mt-1 overflow-hidden">
                               <div
                                 className="bg-emerald-400 h-full"
                                 style={{ width: `${pool.usage_pct}%` }}
@@ -2064,7 +2033,6 @@ export default function App() {
                       ))}
                     </div>
                   </div>
-
                   <div className="mt-4 pt-4 border-t border-zinc-800 flex flex-wrap gap-2">
                     {telemetry?.storage.disks?.map((disk) => (
                       <div
@@ -2099,19 +2067,18 @@ export default function App() {
             <div className="space-y-6">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
                     <Network className="w-4 h-4 text-emerald-400" />
                     SDN Tailscale Mesh Network & Route Pathing
                     <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono rounded-full">
                       WireGuard Native
                     </span>
                   </h2>
-                  <p className="text-xs text-zinc-400">
+                  <p className="text-xs text-zinc-400 mt-1">
                     Sovereign peer-to-peer overlay routing, UDP socket hole
                     punching, and DERP relay telemetry
                   </p>
                 </div>
-
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => setIsPacketHopperOpen(true)}
@@ -2120,7 +2087,6 @@ export default function App() {
                     <Network className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />{" "}
                     Test Mesh in Packet Hopper
                   </button>
-
                   <button
                     onClick={fetchMeshState}
                     disabled={isMeshLoading}
@@ -2133,8 +2099,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Status Header Metrics */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 font-mono">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 font-mono">
                 <div className="bg-[#151518] border border-zinc-800 rounded-2xl p-4">
                   <span className="text-[10px] text-zinc-500 uppercase block">
                     Local Gateway Node
@@ -2142,13 +2107,12 @@ export default function App() {
                   <strong className="text-sm text-white font-bold block mt-1">
                     {meshState?.local.node_name || "pve-server"}
                   </strong>
-                  <span className="text-[11px] text-emerald-400 mt-0.5 block">
+                  <span className="text-[11px] text-emerald-400 mt-0.5 block truncate">
                     {formatIp(
                       meshState?.local.tailscale_ip || "100.116.163.29",
                     )}
                   </span>
                 </div>
-
                 <div className="bg-[#151518] border border-zinc-800 rounded-2xl p-4">
                   <span className="text-[10px] text-zinc-500 uppercase block">
                     Direct WireGuard Paths
@@ -2160,7 +2124,6 @@ export default function App() {
                     UDP Hole Punching Active
                   </span>
                 </div>
-
                 <div className="bg-[#151518] border border-zinc-800 rounded-2xl p-4">
                   <span className="text-[10px] text-zinc-500 uppercase block">
                     Relayed Fallbacks
@@ -2172,7 +2135,6 @@ export default function App() {
                     DERP Tunneling In Use
                   </span>
                 </div>
-
                 <div className="bg-[#151518] border border-zinc-800 rounded-2xl p-4">
                   <span className="text-[10px] text-zinc-500 uppercase block">
                     Preferred Relay Region
@@ -2186,94 +2148,95 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Peer Table */}
               <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
-                <table className="w-full text-left text-xs text-zinc-300">
-                  <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800 font-mono">
-                    <tr>
-                      <th className="px-6 py-3">Peer Machine</th>
-                      <th className="px-6 py-3">Tailscale IPv4</th>
-                      <th className="px-6 py-3">OS / Architecture</th>
-                      <th className="px-6 py-3">Connection Path</th>
-                      <th className="px-6 py-3">Transport Socket</th>
-                      <th className="px-6 py-3 text-right">
-                        Throughput (RX/TX)
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-800/60 font-mono">
-                    {!meshState || meshState.peers.length === 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-zinc-300 min-w-[700px]">
+                    <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800 font-mono">
                       <tr>
-                        <td
-                          colSpan={6}
-                          className="px-6 py-12 text-center text-zinc-500 font-sans"
-                        >
-                          {isMeshLoading
-                            ? "Polling mesh routes..."
-                            : "No peers connected to your tailnet."}
-                        </td>
+                        <th className="px-6 py-3">Peer Machine</th>
+                        <th className="px-6 py-3">Tailscale IPv4</th>
+                        <th className="px-6 py-3">OS / Architecture</th>
+                        <th className="px-6 py-3">Connection Path</th>
+                        <th className="px-6 py-3">Transport Socket</th>
+                        <th className="px-6 py-3 text-right">
+                          Throughput (RX/TX)
+                        </th>
                       </tr>
-                    ) : (
-                      meshState.peers.map((peer) => (
-                        <tr
-                          key={peer.id}
-                          className="hover:bg-zinc-800/20 transition-colors"
-                        >
-                          <td className="px-6 py-4 font-semibold text-white flex items-center gap-2">
-                            <span
-                              className={`w-2 h-2 rounded-full ${peer.online ? "bg-emerald-400" : "bg-zinc-600"}`}
-                            />
-                            {peer.hostname}
-                          </td>
-                          <td className="px-6 py-4 text-emerald-400">
-                            {formatIp(peer.tailscale_ip)}
-                          </td>
-                          <td className="px-6 py-4 text-zinc-400">{peer.os}</td>
-                          <td className="px-6 py-4">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                peer.connection_type === "Direct"
-                                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                  : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                              }`}
-                            >
-                              {peer.connection_type}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-zinc-300">
-                            {formatEndpoint(peer.endpoint)}
-                          </td>
-                          <td className="px-6 py-4 text-right text-zinc-400">
-                            <span className="inline-flex items-center gap-1 text-emerald-400 mr-2">
-                              <ArrowDownLeft className="w-3 h-3" />{" "}
-                              {formatBytes(peer.rx_bytes)}
-                            </span>
-                            <span className="inline-flex items-center gap-1 text-indigo-400">
-                              <ArrowUpRight className="w-3 h-3" />{" "}
-                              {formatBytes(peer.tx_bytes)}
-                            </span>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/60 font-mono">
+                      {!meshState || meshState.peers.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={6}
+                            className="px-6 py-12 text-center text-zinc-500 font-sans"
+                          >
+                            {isMeshLoading
+                              ? "Polling mesh routes..."
+                              : "No peers connected to your tailnet."}
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : (
+                        meshState.peers.map((peer) => (
+                          <tr
+                            key={peer.id}
+                            className="hover:bg-zinc-800/20 transition-colors"
+                          >
+                            <td className="px-6 py-4 font-semibold text-white flex items-center gap-2">
+                              <span
+                                className={`w-2 h-2 rounded-full ${peer.online ? "bg-emerald-400" : "bg-zinc-600"}`}
+                              />
+                              {peer.hostname}
+                            </td>
+                            <td className="px-6 py-4 text-emerald-400">
+                              {formatIp(peer.tailscale_ip)}
+                            </td>
+                            <td className="px-6 py-4 text-zinc-400">
+                              {peer.os}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  peer.connection_type === "Direct"
+                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                    : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                }`}
+                              >
+                                {peer.connection_type}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-zinc-300">
+                              {formatEndpoint(peer.endpoint)}
+                            </td>
+                            <td className="px-6 py-4 text-right text-zinc-400">
+                              <span className="inline-flex items-center gap-1 text-emerald-400 mr-2">
+                                <ArrowDownLeft className="w-3 h-3" />{" "}
+                                {formatBytes(peer.rx_bytes)}
+                              </span>
+                              <span className="inline-flex items-center gap-1 text-indigo-400">
+                                <ArrowUpRight className="w-3 h-3" />{" "}
+                                {formatBytes(peer.tx_bytes)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
-              {/* Protocol Legend */}
-              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-6 space-y-4">
+              <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl p-4 sm:p-6 space-y-4">
                 <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
                   <div className="flex items-center gap-2">
                     <Tag className="w-4 h-4 text-sky-400" />
                     <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                      SDN Mesh Telemetry Glossary & Protocol Legend
+                      SDN Mesh Glossary & Protocol Legend
                     </h3>
                   </div>
-                  <span className="text-[10px] font-mono text-zinc-500">
-                    RFC WireGuard / DERP Protocol Specification
+                  <span className="text-[10px] font-mono text-zinc-500 hidden sm:inline">
+                    RFC WireGuard / DERP Specification
                   </span>
                 </div>
-
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-xs font-mono">
                   <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
                     <div className="flex items-center justify-between">
@@ -2281,112 +2244,40 @@ export default function App() {
                         DERP Relay
                       </span>
                       <span className="text-zinc-500 text-[10px]">
-                        Designated Encrypted Relay for Packets
+                        Fallback Relay
                       </span>
                     </div>
                     <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
-                      A globally distributed fallback relay protocol operating
-                      over HTTPS/WebSockets (TCP 443). Packets are end-to-end
-                      encrypted; DERP relays forward payload frames without
-                      possessing cryptographic keys.
+                      Encrypted fallback relay protocol operating over
+                      HTTPS/WebSockets (TCP 443).
                     </p>
                   </div>
-
                   <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded font-bold text-[10px]">
                         Direct Path
                       </span>
                       <span className="text-zinc-500 text-[10px]">
-                        Peer-to-Peer UDP Hole Punching
+                        P2P UDP Hole Punching
                       </span>
                     </div>
                     <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
-                      Direct, un-relayed WireGuard tunnel established
-                      point-to-point between nodes via STUN NAT hole punching
-                      (default UDP port{" "}
-                      <strong className="text-emerald-400">41641</strong>).
-                      Delivers the lowest latency and line-rate throughput.
+                      Un-relayed WireGuard tunnel established via STUN NAT hole
+                      punching (UDP 41641).
                     </p>
                   </div>
-
-                  <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
+                  <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5 md:col-span-2 lg:col-span-1">
                     <div className="flex items-center justify-between">
                       <span className="px-2 py-0.5 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded font-bold text-[10px]">
-                        IATA Relay Codes
-                      </span>
-                      <span className="text-zinc-500 text-[10px]">
-                        Geographic Relay Region ID
-                      </span>
-                    </div>
-                    <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
-                      Tailscale DERP nodes are named after nearest international
-                      airport IATA codes:
-                    </p>
-                    <div className="flex flex-wrap gap-1.5 pt-1 text-[10px]">
-                      <span className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded">
-                        <strong>dxb</strong>: Dubai (UAE)
-                      </span>
-                      <span className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded">
-                        <strong>blr</strong>: Bangalore (India)
-                      </span>
-                      <span className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded">
-                        <strong>sin</strong>: Singapore
-                      </span>
-                      <span className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded">
-                        <strong>fra</strong>: Frankfurt (EU)
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded font-bold text-[10px]">
                         100.64.0.0/10
                       </span>
                       <span className="text-zinc-500 text-[10px]">
-                        Carrier-Grade NAT (RFC 6598)
+                        Carrier-Grade NAT
                       </span>
                     </div>
                     <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
-                      Assigned overlay IPv4 address space exclusive to your
-                      tailnet. Enables collision-free routing across disparate
-                      subnets and remote home labs without requiring
-                      split-horizon DNS overrides.
-                    </p>
-                  </div>
-
-                  <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="px-2 py-0.5 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded font-bold text-[10px]">
-                        Socket Endpoints
-                      </span>
-                      <span className="text-zinc-500 text-[10px]">
-                        Public/Private Socket Tuples
-                      </span>
-                    </div>
-                    <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
-                      Format: <code className="text-emerald-400">IP:Port</code>.
-                      Indicates the physical socket negotiated between WireGuard
-                      crypto-routers. In Guest mode, host IPs are sanitized for
-                      security.
-                    </p>
-                  </div>
-
-                  <div className="p-3.5 bg-zinc-900/70 border border-zinc-800 rounded-xl space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded font-bold text-[10px]">
-                        Tailscale Serve
-                      </span>
-                      <span className="text-zinc-500 text-[10px]">
-                        Reverse Proxy Ingress
-                      </span>
-                    </div>
-                    <p className="text-[11px] font-sans text-zinc-300 leading-relaxed">
-                      Terminates publicly trusted HTTPS certificates from Let's
-                      Encrypt for internal services (e.g., Wazuh, qBittorrent,
-                      Jellyfin) and forwards traffic to local backend ports
-                      without manual cert provisioning.
+                      Overlay IPv4 space exclusive to your tailnet for
+                      collision-free subnet routing.
                     </p>
                   </div>
                 </div>
@@ -2408,65 +2299,67 @@ export default function App() {
                   </p>
                 </div>
               </div>
-              <table className="w-full text-left text-xs text-zinc-300">
-                <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
-                  <tr>
-                    <th className="px-6 py-3">Service Name</th>
-                    <th className="px-6 py-3">Category</th>
-                    <th className="px-6 py-3">Status</th>
-                    <th className="px-6 py-3">Host Node</th>
-                    <th className="px-6 py-3">Latency</th>
-                    <th className="px-6 py-3">SLA Availability</th>
-                    <th className="px-6 py-3 text-right">Direct Endpoint</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/60">
-                  {services.map((svc, i) => (
-                    <tr key={i} className="hover:bg-zinc-800/20">
-                      <td className="px-6 py-4 font-semibold text-white flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />{" "}
-                        {svc.name}
-                      </td>
-                      <td className="px-6 py-4 text-zinc-400">
-                        {svc.category}
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold rounded-full border border-emerald-500/20">
-                          {svc.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 font-mono text-zinc-400">
-                        {svc.host_node}
-                      </td>
-                      <td className="px-6 py-4 font-mono text-emerald-400">
-                        {svc.latency_ms} ms
-                      </td>
-                      <td className="px-6 py-4 font-mono text-zinc-300">
-                        {svc.uptime_pct}%
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        {isSuperAdmin ? (
-                          <a
-                            href={svc.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-xs text-indigo-400 hover:underline inline-flex items-center gap-1 font-mono"
-                          >
-                            :{svc.port} <ExternalLink className="w-3 h-3" />
-                          </a>
-                        ) : (
-                          <span
-                            title="Direct link restricted to SuperAdmin"
-                            className="text-xs text-zinc-600 inline-flex items-center gap-1 font-mono cursor-not-allowed opacity-60"
-                          >
-                            <Lock className="w-3 h-3" /> :{svc.port}
-                          </span>
-                        )}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-zinc-300 min-w-[700px]">
+                  <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
+                    <tr>
+                      <th className="px-6 py-3">Service Name</th>
+                      <th className="px-6 py-3">Category</th>
+                      <th className="px-6 py-3">Status</th>
+                      <th className="px-6 py-3">Host Node</th>
+                      <th className="px-6 py-3">Latency</th>
+                      <th className="px-6 py-3">SLA Availability</th>
+                      <th className="px-6 py-3 text-right">Direct Endpoint</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60">
+                    {services.map((svc, i) => (
+                      <tr key={i} className="hover:bg-zinc-800/20">
+                        <td className="px-6 py-4 font-semibold text-white flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />{" "}
+                          {svc.name}
+                        </td>
+                        <td className="px-6 py-4 text-zinc-400">
+                          {svc.category}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold rounded-full border border-emerald-500/20">
+                            {svc.status}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 font-mono text-zinc-400">
+                          {svc.host_node}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-emerald-400">
+                          {svc.latency_ms} ms
+                        </td>
+                        <td className="px-6 py-4 font-mono text-zinc-300">
+                          {svc.uptime_pct}%
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          {isSuperAdmin ? (
+                            <a
+                              href={svc.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-indigo-400 hover:underline inline-flex items-center gap-1 font-mono"
+                            >
+                              :{svc.port} <ExternalLink className="w-3 h-3" />
+                            </a>
+                          ) : (
+                            <span
+                              title="Direct link restricted to SuperAdmin"
+                              className="text-xs text-zinc-600 inline-flex items-center gap-1 font-mono cursor-not-allowed opacity-60"
+                            >
+                              <Lock className="w-3 h-3" /> :{svc.port}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
@@ -2475,26 +2368,25 @@ export default function App() {
             <div className="space-y-6">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
                     <ShieldCheck className="w-4 h-4 text-emerald-400" />
                     Security Telemetry & SIEM Audit Stream
                     <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono rounded-full">
                       Wazuh Active
                     </span>
                   </h2>
-                  <p className="text-xs text-zinc-400">
+                  <p className="text-xs text-zinc-400 mt-1">
                     Live SIEM events streamed across hypervisors, LXC
                     containers, and auth sensors
                   </p>
                 </div>
-
                 <div className="flex items-center gap-2 flex-wrap">
-                  <div className="flex items-center gap-1 bg-[#18181b] p-1 rounded-xl border border-zinc-800">
+                  <div className="flex items-center gap-1 bg-[#18181b] p-1 rounded-xl border border-zinc-800 overflow-x-auto max-w-full">
                     {monitoredNodes.map((nodeName) => (
                       <button
                         key={nodeName}
                         onClick={() => setSelectedSecurityNode(nodeName)}
-                        className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
+                        className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all whitespace-nowrap ${
                           selectedSecurityNode === nodeName
                             ? "bg-zinc-800 text-white font-semibold shadow-sm"
                             : "text-zinc-400 hover:text-zinc-200"
@@ -2504,7 +2396,6 @@ export default function App() {
                       </button>
                     ))}
                   </div>
-
                   <select
                     value={securitySeverityFilter}
                     onChange={(e) => setSecuritySeverityFilter(e.target.value)}
@@ -2515,7 +2406,6 @@ export default function App() {
                     <option value="WARN">Warnings & Above</option>
                     <option value="INFO">Info & Above</option>
                   </select>
-
                   <button
                     onClick={fetchSecurityData}
                     disabled={isSecurityLoading}
@@ -2529,65 +2419,69 @@ export default function App() {
               </div>
 
               <div className="bg-[#151518] border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
-                <table className="w-full text-left text-xs text-zinc-300">
-                  <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
-                    <tr>
-                      <th className="px-6 py-3">Alert ID</th>
-                      <th className="px-6 py-3">Severity</th>
-                      <th className="px-6 py-3">Node / Agent</th>
-                      <th className="px-6 py-3">Audit Event Summary</th>
-                      <th className="px-6 py-3">Origin IP</th>
-                      <th className="px-6 py-3 text-right">Timestamp (GST)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-800/60 font-mono">
-                    {wazuhAlerts.length === 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-zinc-300 min-w-[700px]">
+                    <thead className="bg-[#121214] text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
                       <tr>
-                        <td
-                          colSpan={6}
-                          className="px-6 py-12 text-center text-zinc-500 font-sans"
-                        >
-                          {isSecurityLoading
-                            ? "Querying Wazuh Indexer..."
-                            : `No active alerts recorded for ${selectedSecurityNode}.`}
-                        </td>
+                        <th className="px-6 py-3">Alert ID</th>
+                        <th className="px-6 py-3">Severity</th>
+                        <th className="px-6 py-3">Node / Agent</th>
+                        <th className="px-6 py-3">Audit Event Summary</th>
+                        <th className="px-6 py-3">Origin IP</th>
+                        <th className="px-6 py-3 text-right">
+                          Timestamp (GST)
+                        </th>
                       </tr>
-                    ) : (
-                      wazuhAlerts.map((log) => (
-                        <tr key={log.id} className="hover:bg-zinc-800/20">
-                          <td className="px-6 py-4 text-zinc-400">
-                            {log.id.slice(0, 10)}...
-                          </td>
-                          <td className="px-6 py-4">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                log.level === "CRITICAL"
-                                  ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                                  : log.level === "WARN"
-                                    ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                                    : "bg-sky-500/10 text-sky-400 border border-sky-500/20"
-                              }`}
-                            >
-                              {log.level}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-white font-semibold font-sans">
-                            {log.source}
-                          </td>
-                          <td className="px-6 py-4 font-sans text-zinc-200">
-                            {log.event}
-                          </td>
-                          <td className="px-6 py-4 text-zinc-400">
-                            {formatIp(log.ip_address)}
-                          </td>
-                          <td className="px-6 py-4 text-right text-zinc-500">
-                            {log.timestamp}
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/60 font-mono">
+                      {wazuhAlerts.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={6}
+                            className="px-6 py-12 text-center text-zinc-500 font-sans"
+                          >
+                            {isSecurityLoading
+                              ? "Querying Wazuh Indexer..."
+                              : `No active alerts recorded for ${selectedSecurityNode}.`}
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : (
+                        wazuhAlerts.map((log) => (
+                          <tr key={log.id} className="hover:bg-zinc-800/20">
+                            <td className="px-6 py-4 text-zinc-400">
+                              {log.id.slice(0, 10)}...
+                            </td>
+                            <td className="px-6 py-4">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  log.level === "CRITICAL"
+                                    ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                    : log.level === "WARN"
+                                      ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                      : "bg-sky-500/10 text-sky-400 border border-sky-500/20"
+                                }`}
+                              >
+                                {log.level}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-white font-semibold font-sans">
+                              {log.source}
+                            </td>
+                            <td className="px-6 py-4 font-sans text-zinc-200">
+                              {log.event}
+                            </td>
+                            <td className="px-6 py-4 text-zinc-400">
+                              {formatIp(log.ip_address)}
+                            </td>
+                            <td className="px-6 py-4 text-right text-zinc-500">
+                              {log.timestamp}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -2595,20 +2489,19 @@ export default function App() {
           {/* ================= HARDWARE EXPANSION VIEW ================= */}
           {activeTab === "upgrades" && (
             <div className="space-y-6">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
                     Future Upgrades & Hardware Expansion
                     <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-mono rounded-full">
                       Notion 2-Way Sync
                     </span>
                   </h2>
-                  <p className="text-xs text-zinc-400">
+                  <p className="text-xs text-zinc-400 mt-1">
                     Hardware expansion tracks, status updates, and deletion
                     workflows
                   </p>
                 </div>
-
                 <div className="flex items-center gap-3">
                   <button
                     onClick={fetchUpgrades}
@@ -2619,7 +2512,6 @@ export default function App() {
                       className={`w-3.5 h-3.5 ${isUpgradesLoading ? "animate-spin text-emerald-400" : ""}`}
                     />
                   </button>
-
                   {isSuperAdmin && (
                     <button
                       onClick={() => setIsCreatingUpgrade(true)}
@@ -2632,12 +2524,12 @@ export default function App() {
               </div>
 
               {isCreatingUpgrade && isSuperAdmin && (
-                <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
+                <div className="p-4 sm:p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
                     Submit Hardware/Software Expansion Requirement
                   </h3>
                   <form onSubmit={handleCreateUpgrade} className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                       <div className="md:col-span-1">
                         <label className="block text-[11px] font-mono text-zinc-400 mb-1">
                           Title
@@ -2683,7 +2575,6 @@ export default function App() {
                         </select>
                       </div>
                     </div>
-
                     <div>
                       <label className="block text-[11px] font-mono text-zinc-400 mb-1">
                         Description & Justification
@@ -2697,7 +2588,6 @@ export default function App() {
                         required
                       />
                     </div>
-
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
@@ -2768,7 +2658,6 @@ export default function App() {
                           {upg.description}
                         </p>
                       </div>
-
                       <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-500 font-mono">
                         <span>By: {upg.requested_by}</span>
                         <div className="flex items-center gap-2">
@@ -2809,23 +2698,22 @@ export default function App() {
             </div>
           )}
 
-          {/* ================= MAINTENANCE WINDOWS (NOTION BACKED) ================= */}
+          {/* ================= MAINTENANCE WINDOWS ================= */}
           {activeTab === "calendar" && (
             <div className="space-y-6">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
                     Scheduled Maintenance Windows
                     <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-mono rounded-full">
                       Notion 2-Way Sync
                     </span>
                   </h2>
-                  <p className="text-xs text-zinc-400">
+                  <p className="text-xs text-zinc-400 mt-1">
                     Target hypervisor maintenance, security audits, and
                     scrubbing procedures
                   </p>
                 </div>
-
                 <div className="flex items-center gap-3">
                   <button
                     onClick={fetchCalendarEvents}
@@ -2836,7 +2724,6 @@ export default function App() {
                       className={`w-3.5 h-3.5 ${isEventsLoading ? "animate-spin text-emerald-400" : ""}`}
                     />
                   </button>
-
                   {isSuperAdmin && (
                     <button
                       onClick={() => setIsCreatingEvent(true)}
@@ -2849,7 +2736,7 @@ export default function App() {
               </div>
 
               {isCreatingEvent && isSuperAdmin && (
-                <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
+                <div className="p-4 sm:p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
                     Schedule Maintenance Window (Pushes to Notion)
                   </h3>
@@ -2857,7 +2744,7 @@ export default function App() {
                     onSubmit={handleCreateCalendarEvent}
                     className="space-y-4"
                   >
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                       <div className="lg:col-span-2">
                         <label className="block text-[11px] font-mono text-zinc-400 mb-1">
                           Operation Title
@@ -2901,8 +2788,7 @@ export default function App() {
                         />
                       </div>
                     </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-[11px] font-mono text-zinc-400 mb-1">
                           Time Window
@@ -2930,7 +2816,6 @@ export default function App() {
                         />
                       </div>
                     </div>
-
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
@@ -2958,7 +2843,7 @@ export default function App() {
                     : "No maintenance windows scheduled."}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {filteredEvents.map((evt) => (
                     <div
                       key={evt.id}
@@ -2987,7 +2872,7 @@ export default function App() {
                         <h3 className="text-sm font-bold text-white mb-2">
                           {evt.title}
                         </h3>
-                        <div className="flex items-center gap-4 text-xs font-mono text-zinc-400">
+                        <div className="flex items-center gap-4 text-xs font-mono text-zinc-400 flex-wrap">
                           <span className="flex items-center gap-1">
                             <CalendarDays className="w-3.5 h-3.5 text-zinc-500" />{" "}
                             {evt.date}
@@ -2998,7 +2883,6 @@ export default function App() {
                           </span>
                         </div>
                       </div>
-
                       <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between">
                         <span className="text-[11px] font-mono text-zinc-500">
                           Target:{" "}
@@ -3049,28 +2933,27 @@ export default function App() {
           {/* ================= RUNBOOKS & SOPS ================= */}
           {activeTab === "notes" && (
             <div className="space-y-6">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
                     Sovereign Homelab Runbooks & SOPs
                     <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono rounded-full">
                       Notion 2-Way Sync
                     </span>
                   </h2>
-                  <p className="text-xs text-zinc-400">
+                  <p className="text-xs text-zinc-400 mt-1">
                     Operational standard procedures synchronized directly with
                     Notion
                   </p>
                 </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5 bg-[#18181b] p-1 rounded-xl border border-zinc-800">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex items-center gap-1.5 bg-[#18181b] p-1 rounded-xl border border-zinc-800 overflow-x-auto max-w-full">
                     {["All", "Infrastructure", "Security", "Update"].map(
                       (tag) => (
                         <button
                           key={tag}
                           onClick={() => setSelectedTag(tag)}
-                          className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
+                          className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all whitespace-nowrap ${
                             selectedTag === tag
                               ? "bg-zinc-800 text-white shadow-sm"
                               : "text-zinc-400 hover:text-zinc-200"
@@ -3102,13 +2985,13 @@ export default function App() {
               </div>
 
               {isCreatingNote && isSuperAdmin && (
-                <div className="p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
+                <div className="p-4 sm:p-6 bg-[#151518] border border-zinc-800 rounded-2xl">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
                     Add New Runbook to Notion Database
                   </h3>
                   <form onSubmit={handleCreateNote} className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                      <div className="md:col-span-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="lg:col-span-2">
                         <label className="block text-[11px] font-mono text-zinc-400 mb-1">
                           Title
                         </label>
@@ -3148,7 +3031,6 @@ export default function App() {
                         />
                       </div>
                     </div>
-
                     <div>
                       <label className="block text-[11px] font-mono text-zinc-400 mb-1">
                         Snippet / SOP Instructions
@@ -3162,7 +3044,6 @@ export default function App() {
                         required
                       />
                     </div>
-
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
@@ -3190,7 +3071,7 @@ export default function App() {
                     : "No runbooks found in your Notion database."}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {filteredNotes.map((note) => (
                     <div
                       key={note.id}
@@ -3234,8 +3115,7 @@ export default function App() {
                   </p>
                 </div>
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 {apps.map((app, idx) => {
                   const AppIcon = app.icon;
                   return (
@@ -3268,7 +3148,6 @@ export default function App() {
                             {app.status}
                           </span>
                         </div>
-
                         <span className="text-[10px] font-mono text-zinc-500 uppercase font-semibold block mb-1">
                           {app.category}
                         </span>
@@ -3279,7 +3158,6 @@ export default function App() {
                           {app.desc}
                         </p>
                       </div>
-
                       <div className="mt-6 pt-4 border-t border-zinc-800/80 flex items-center justify-between">
                         <span className="text-[10px] font-mono text-zinc-500">
                           External Ingress
@@ -3312,7 +3190,7 @@ export default function App() {
         </main>
       </div>
 
-      {/* Terminal Modal for SuperAdmin VNC */}
+      {/* Terminal Modal */}
       {activeTerminal && authToken && (
         <VncTerminal
           node={activeTerminal.node}
@@ -3324,7 +3202,7 @@ export default function App() {
         />
       )}
 
-      {/* Packet Hopper Educational SDN Simulator */}
+      {/* Packet Hopper Modal */}
       <PacketHopperModal
         isOpen={isPacketHopperOpen}
         onClose={() => setIsPacketHopperOpen(false)}

@@ -1,15 +1,3 @@
-/**
- * Interactive noVNC Terminal Modal Component.
- *
- * Key Architectural Decisions:
- * 1. Bearer Token Propagation: Carries the user's active session token to authorize against /vncproxy.
- * 2. Ephemeral Single-Use Ticket: Requests a 30-second single-use console JWT via /auth/console-token
- *    to pass inside the WebSocket query parameters.
- * 3. Handshake Debouncing: Implements a 2-second grace period on disconnect events to eliminate
- *    premature error popups while the RFB socket negotiates.
- * 4. Strict Lifecycle Teardown: Safely disconnects and unmounts the RFB engine to prevent dangling sockets.
- */
-
 import { useEffect, useRef, useState } from "react";
 // @ts-ignore
 import RFB from "@novnc/novnc";
@@ -35,7 +23,6 @@ export function VncTerminal({
   const containerRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<any>(null);
   const disconnectTimerRef = useRef<number | null>(null);
-
   const [status, setStatus] = useState<
     "connecting" | "connected" | "disconnected" | "error"
   >("connecting");
@@ -51,13 +38,11 @@ export function VncTerminal({
   const connectVnc = async () => {
     if (!containerRef.current) return;
     setStatus("connecting");
-
     try {
       const host = window.location.host;
       const protocol = window.location.protocol;
       const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
 
-      // STEP 1: Request 30-second ephemeral console token
       const tokenResponse = await fetch("/api/v1/auth/console-token", {
         method: "POST",
         headers: {
@@ -76,7 +61,6 @@ export function VncTerminal({
       const tokenData = await tokenResponse.json();
       const consoleToken = tokenData.console_token;
 
-      // STEP 2: Request Proxmox VNC proxy tickets
       const proxyResponse = await fetch(
         "/api/v1/nodes/" + node + "/" + vmType + "/" + vmid + "/vncproxy",
         {
@@ -92,7 +76,6 @@ export function VncTerminal({
         throw new Error("Failed to get Proxmox VNC ticket");
       const proxyData = await proxyResponse.json();
 
-      // STEP 3: Construct the custom OmniCloud WebSocket URL with all required query params
       const wsParams = new URLSearchParams({
         port: proxyData.port.toString(),
         ticket: proxyData.ticket,
@@ -113,11 +96,9 @@ export function VncTerminal({
         "?" +
         wsParams.toString();
 
-      // Initialize noVNC
       const rfb = new RFB(containerRef.current, wsUrl, {
         credentials: { password: proxyData.ticket },
       });
-
       rfbRef.current = rfb;
 
       rfb.addEventListener("connect", () => {
@@ -153,17 +134,16 @@ export function VncTerminal({
   }, [vmid]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-zinc-900 border border-zinc-700 w-full max-w-5xl rounded-xl shadow-2xl overflow-hidden flex flex-col h-[750px]">
-        {/* Terminal Header Bar */}
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
+      <div className="bg-zinc-900 border border-zinc-700 w-full max-w-5xl rounded-xl shadow-2xl overflow-hidden flex flex-col h-[85vh] sm:h-[750px] max-h-[90vh]">
         <div className="bg-zinc-950 px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Terminal className="w-4 h-4 text-emerald-400" />
-            <span className="text-sm font-medium text-zinc-200">
+          <div className="flex items-center gap-2 truncate">
+            <Terminal className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="text-xs sm:text-sm font-medium text-zinc-200 truncate">
               Console: <strong className="text-white">{vmName}</strong> ({vmid})
             </span>
             <span
-              className={`px-2 py-0.5 text-xs font-mono rounded-full ${
+              className={`px-2 py-0.5 text-[10px] font-mono rounded-full shrink-0 ${
                 status === "connected"
                   ? "bg-emerald-500/10 text-emerald-400"
                   : status === "connecting"
@@ -174,8 +154,7 @@ export function VncTerminal({
               {status}
             </span>
           </div>
-
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={connectVnc}
               className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
@@ -193,7 +172,6 @@ export function VncTerminal({
           </div>
         </div>
 
-        {/* Terminal Canvas Body */}
         <div className="flex-1 bg-black relative flex items-center justify-center overflow-hidden">
           {status === "connecting" && (
             <div className="absolute z-10 text-zinc-400 text-xs font-mono flex items-center gap-2 bg-zinc-900/80 px-4 py-2 rounded-lg border border-zinc-800">
@@ -201,7 +179,6 @@ export function VncTerminal({
               WebSocket handshake...
             </div>
           )}
-
           {status === "disconnected" && errorMessage && (
             <div className="absolute z-10 text-center max-w-md p-6 bg-zinc-900/90 border border-rose-900/40 rounded-xl">
               <p className="text-rose-400 text-sm font-medium mb-2">
@@ -218,7 +195,6 @@ export function VncTerminal({
               </button>
             </div>
           )}
-
           <div
             ref={containerRef}
             className="w-full h-full flex items-center justify-center"

@@ -300,16 +300,50 @@ async def run_subprocess_stream(cmd: list[str], cwd: str, websocket: WebSocket):
     await process.wait()
     return process.returncode
 
-# Websocket Endpoint for Live Terraform Plan/Apply Execution 
+# Helper to validate WebSocket authentication token and enforce SuperAdmin role
+async def verify_websocket_superadmin(websocket: WebSocket, token: Optional[str]) -> bool:
+    """Validate Bearer or query-passed JWT and enforce SuperAdmin access control."""
+    if not token:
+        await websocket.send_text(json.dumps({
+            "type": "error",
+            "data": "FORBIDDEN: Missing authentication token."
+        }))
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return False
+
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        role = payload.get("role")
+        if role != "SuperAdmin":
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "data": "FORBIDDEN: Guest accounts cannot initiate Terraform or Ansible actions."
+            }))
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return False
+        return True
+    except jwt.PyJWTError:
+        await websocket.send_text(json.dumps({
+            "type": "error",
+            "data": "FORBIDDEN: Invalid or expired cryptographic token."
+        }))
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return False
+
+# WebSocket Endpoint for Live Terraform Plan/Apply Execution
 @app.websocket("/api/v1/ws/provision/terraform")
 async def ws_terraform_provision(websocket: WebSocket):
-    await websocket.accept()
+    await websocket.accept()  # Must accept before receiving frame
     try:
-        # Expect initial JSON config from frontend
         init_data = await websocket.receive_text()
         params = json.loads(init_data)
-        action = params.get("action", "plan") # plan, apply, destroy
+        token = params.get("token")
 
+        is_authorized = await verify_websocket_superadmin(websocket, token)
+        if not is_authorized:
+            return
+
+        action = params.get("action", "plan")
         tf_vars = [
             f"-var=vmid={params.get('vmid')}",
             f"-var=hostname={params.get('hostname')}",
@@ -323,12 +357,12 @@ async def ws_terraform_provision(websocket: WebSocket):
             cmd = [TERRAFORM_BIN, "apply", "-auto-approve", "-no-color"] + tf_vars
         elif action == "destroy":
             cmd = [TERRAFORM_BIN, "destroy", "-auto-approve", "-no-color"] + tf_vars
-        else: 
+        else:
             await websocket.send_text(json.dumps({"type": "error", "data": "Invalid action"}))
             await websocket.close()
             return
 
-        await websocket.send_text(json.dumps({"type": "status", "data": f"Execution terraform {action}..."}))
+        await websocket.send_text(json.dumps({"type": "status", "data": f"Executing terraform {action}..."}))
         rc = await run_subprocess_stream(cmd, cwd=INFRA_DIR, websocket=websocket)
 
         if rc == 0:
@@ -339,21 +373,32 @@ async def ws_terraform_provision(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        await websocket.send_text(json.dumps({"type": "error", "data": str(e)}))
+        try:
+            await websocket.send_text(json.dumps({"type": "error", "data": str(e)}))
+        except Exception:
+            pass
     finally:
-        await websocket.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
-# Websocket Endpoint for Live Ansible Playbook Execution
+# WebSocket Endpoint for Live Ansible Playbook Execution
 @app.websocket("/api/v1/ws/provision/ansible")
 async def ws_ansible_provision(websocket: WebSocket):
-    await websocket.accept()
+    await websocket.accept()  # Must accept before receiving frame
     try:
         init_data = await websocket.receive_text()
         params = json.loads(init_data)
+        token = params.get("token")
+
+        is_authorized = await verify_websocket_superadmin(websocket, token)
+        if not is_authorized:
+            return
+
         playbook = params.get("playbook", "seerr-playbook.yml")
         target_ip = params.get("target_ip")
 
-        # Playbooks sit directly in INFRA_DIR
         playbook_path = os.path.join(INFRA_DIR, playbook)
         cmd = [ANSIBLE_BIN, "-i", f"{target_ip},", playbook_path, "-e", f"target_host={target_ip}"]
 
@@ -368,9 +413,15 @@ async def ws_ansible_provision(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        await websocket.send_text(json.dumps({"type": "error", "data": str(e)}))
+        try:
+            await websocket.send_text(json.dumps({"type": "error", "data": str(e)}))
+        except Exception:
+            pass
     finally:
-        await websocket.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 def enforce_vm_access(vmid: int, user: UserContext, required_action: str = "view"):
     """Enforce role-based access control policies across all endpoints."""

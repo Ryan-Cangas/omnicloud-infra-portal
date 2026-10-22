@@ -2088,7 +2088,10 @@ export default function App() {
 
           {/* ================= PROVISIONING & GITOPS STUDIO ================= */}
           {activeTab === "provisioning" && (
-            <ProvisioningStudio authToken={authToken} />
+            <ProvisioningStudio
+              authToken={authToken}
+              userRole={currentUser?.role}
+            />
           )}
 
           {/* ================= SDN TAILSCALE MESH NETWORK ================= */}

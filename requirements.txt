@@ -8,3 +8,4 @@ pydantic>=2.6.0
 pyjwt>=2.8.0
 bcrypt>=4.1.0
 urllib3>=2.2.0
+PyOTP==2.12.1

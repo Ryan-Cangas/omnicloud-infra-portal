@@ -3,12 +3,18 @@ import { LxcWorkload } from "../types/omnicloud";
 
 interface OverviewPageProps {
   workloads: LxcWorkload[];
+  liveRxKbps?: number;
+  liveTxKbps?: number;
+  pendingPowerVmids?: number[];
   onTogglePower: (vmid: number) => void;
   onOpenConsole: (workload: LxcWorkload) => void;
 }
 
 export const OverviewPage: React.FC<OverviewPageProps> = ({
   workloads,
+  liveRxKbps,
+  liveTxKbps,
+  pendingPowerVmids = [],
   onTogglePower,
   onOpenConsole,
 }) => {
@@ -21,12 +27,26 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   );
   const stoppedCount = workloads.length - onlineCount;
 
-  const totalThroughputKbps = useMemo(
+  const fallbackThroughputKbps = useMemo(
     () => 139 + onlineCount * 78,
     [onlineCount],
   );
-  const txKbps = Math.round(totalThroughputKbps * 0.225);
-  const rxKbps = totalThroughputKbps - txKbps;
+  const hasLiveNet =
+    typeof liveRxKbps === "number" &&
+    typeof liveTxKbps === "number" &&
+    liveRxKbps + liveTxKbps > 0;
+
+  const txKbps = hasLiveNet
+    ? Math.round(liveTxKbps)
+    : Math.round(fallbackThroughputKbps * 0.225);
+  const rxKbps = hasLiveNet
+    ? Math.round(liveRxKbps)
+    : fallbackThroughputKbps - txKbps;
+  const totalThroughputKbps = txKbps + rxKbps;
+  const txSharePct =
+    totalThroughputKbps > 0
+      ? Math.min(90, Math.max(10, (txKbps / totalThroughputKbps) * 100))
+      : 22.5;
 
   const filteredWorkloads = useMemo(() => {
     return workloads.filter((w) => {
@@ -110,8 +130,14 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             <span className="kpi-hero-value">{totalThroughputKbps} Kbps</span>
           </div>
           <div className="meter-track" aria-hidden="true">
-            <div className="meter-fill-vermilion" style={{ width: "22.5%" }} />
-            <div className="meter-fill-ink" style={{ width: "77.5%" }} />
+            <div
+              className="meter-fill-vermilion"
+              style={{ width: `${txSharePct.toFixed(1)}%` }}
+            />
+            <div
+              className="meter-fill-ink"
+              style={{ width: `${(100 - txSharePct).toFixed(1)}%` }}
+            />
           </div>
           <div className="kpi-foot-row">
             <span style={{ color: "var(--signal-vermilion)" }}>
@@ -188,6 +214,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             <tbody>
               {filteredWorkloads.map((w) => {
                 const isRunning = w.state === "running";
+                const isPending = pendingPowerVmids.includes(w.vmid);
                 return (
                   <tr
                     key={w.vmid}
@@ -247,7 +274,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                         <span
                           className={`led-dot ${isRunning ? "led-online" : "led-stopped"}`}
                         />
-                        {w.state}
+                        {isPending ? "SWITCHING" : w.state}
                       </span>
                     </td>
 
@@ -284,7 +311,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                         className="meter-track"
                         style={{
                           marginTop: "5px",
-                          height: "4px",
+                          height: "5px",
                           width: "112px",
                         }}
                       >
@@ -317,6 +344,8 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                           aria-checked={isRunning}
                           aria-label={`Toggle power for ${w.name}`}
                           className="rocker-switch"
+                          disabled={isPending}
+                          style={{ opacity: isPending ? 0.55 : 1 }}
                           onClick={() => onTogglePower(w.vmid)}
                         >
                           <span className="rocker-knob" />

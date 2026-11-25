@@ -1,26 +1,52 @@
-import React, { useState } from "react";
-import { LxcWorkload } from "../types/omnicloud";
+import React, { useMemo, useState } from "react";
+import { LxcWorkload, TailscaleMeshResponse } from "../types/omnicloud";
 
 interface SdnMeshPageProps {
   workloads: LxcWorkload[];
+  meshData?: TailscaleMeshResponse | null;
   onOpenConsole: (workload: LxcWorkload) => void;
 }
 
 export const SdnMeshPage: React.FC<SdnMeshPageProps> = ({
   workloads,
+  meshData,
   onOpenConsole,
 }) => {
   const [routeFilter, setRouteFilter] = useState<"ALL" | "DIRECT" | "DERP">(
     "ALL",
   );
 
-  const peers = workloads.filter((w) => {
+  const enrichedWorkloads = useMemo(() => {
+    if (!meshData?.peers?.length) return workloads;
+    const peerByHost = new Map(
+      meshData.peers.map((p) => [p.hostname.toLowerCase(), p]),
+    );
+    const peerByIp = new Map(meshData.peers.map((p) => [p.tailscale_ip, p]));
+
+    return workloads.map((w) => {
+      const matched =
+        peerByIp.get(w.tailnetIp) || peerByHost.get(w.name.toLowerCase());
+      if (!matched) return w;
+      return {
+        ...w,
+        tailnetIp: matched.tailscale_ip || w.tailnetIp,
+        peerMode:
+          matched.relay === "direct" ? ("direct" as const) : ("DERP" as const),
+      };
+    });
+  }, [workloads, meshData]);
+
+  const peers = enrichedWorkloads.filter((w) => {
     if (routeFilter === "DIRECT")
       return w.state === "running" && w.peerMode === "direct";
     if (routeFilter === "DERP")
       return w.state !== "running" || w.peerMode === "DERP";
     return true;
   });
+
+  const routerIp = meshData?.local?.tailscale_ip || "100.117.21.82";
+  const routerHost = meshData?.local?.node_name || "pve-server";
+  const derpRegion = meshData?.local?.derp_relay || "dxb";
 
   return (
     <>
@@ -32,14 +58,16 @@ export const SdnMeshPage: React.FC<SdnMeshPageProps> = ({
           </div>
           <div className="kpi-hero-row">
             <span className="kpi-hero-value" style={{ fontSize: "26px" }}>
-              100.117.21.82
+              {routerIp}
             </span>
           </div>
           <div
             className="kpi-foot-row"
             style={{ color: "var(--signal-online)" }}
           >
-            <span>● pve-server · MagicDNS Active (dxb.ts.net)</span>
+            <span>
+              ● {routerHost} · MagicDNS Active ({derpRegion}.ts.net)
+            </span>
           </div>
         </div>
 
@@ -164,7 +192,9 @@ export const SdnMeshPage: React.FC<SdnMeshPageProps> = ({
                         <span
                           className={`led-dot ${active ? "led-online" : "led-stopped"}`}
                         />
-                        {active ? "DIRECT UDP" : "DERP STANDBY"}
+                        {active && w.peerMode === "direct"
+                          ? "DIRECT UDP"
+                          : "DERP STANDBY"}
                       </span>
                     </td>
                     <td className="mono" style={{ fontSize: "12px" }}>

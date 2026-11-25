@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
+import RFB from "@novnc/novnc";
 import { LxcWorkload } from "../types/omnicloud";
+import {
+  getStoredToken,
+  requestConsoleSession,
+} from "../services/OmnicloudApi";
+import { executeMockShellCommand } from "../data/mockShell";
 
 interface ConsoleDrawerProps {
   workload: LxcWorkload | null;
@@ -14,33 +20,165 @@ export const ConsoleDrawer: React.FC<ConsoleDrawerProps> = ({
 }) => {
   const [lines, setLines] = useState<string[]>([]);
   const [command, setCommand] = useState("");
+  const [wsConnected, setWsConnected] = useState(false);
+  const [vncFallbackActive, setVncFallbackActive] = useState(false);
+  const [statusNote, setStatusNote] = useState<string>("");
+
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const vncScreenRef = useRef<HTMLDivElement | null>(null);
+  const rfbRef = useRef<RFB | null>(null);
+
+  const targetVmid = workload?.vmid ?? null;
+  const targetNode = workload?.node ?? "";
+  const targetType = workload?.type ?? "LXC";
+  const targetState = workload?.state ?? "stopped";
+  const targetName = workload?.name ?? "";
+  const targetDesc = workload?.description ?? "";
+  const targetRamGb = workload?.ramPoolGb ?? 1.0;
+  const targetTailnetIp = workload?.tailnetIp ?? "";
+  const targetPort = workload?.port ?? "";
 
   useEffect(() => {
-    if (!workload) return;
+    if (targetVmid === null) return;
+
+    setWsConnected(false);
+    setVncFallbackActive(false);
+
+    const hasToken = Boolean(getStoredToken());
     const banner = [
-      `Connecting to pve-server (100.117.21.82) via JWT session [RYAN CANGAS · SUPERADMIN]...`,
-      `Executing: pct enter ${workload.vmid}`,
+      `Connecting to ${targetNode} (100.117.21.82) via JWT session [SUPERADMIN]...`,
+      `Executing: pct enter ${targetVmid}`,
       `------------------------------------------------------------------------`,
-      `Linux ${workload.name.toLowerCase()} 6.8.12-43-pve #1 SMP PREEMPT_DYNAMIC x86_64`,
-      `Workload: #${workload.vmid} (${workload.description}) · Pool: ${workload.ramPoolGb.toFixed(1)} GB`,
-      workload.state === "running"
-        ? `Status: ACTIVE · Tailnet ${workload.tailnetIp} · Port ${workload.port}`
-        : `Warning: Container #${workload.vmid} is currently STOPPED. Type 'start' to boot.`,
+      `Linux ${targetName.toLowerCase()} 6.8.12-43-pve #1 SMP PREEMPT_DYNAMIC x86_64`,
+      `Workload: #${targetVmid} (${targetDesc}) · Pool: ${targetRamGb.toFixed(1)} GB`,
+      targetState === "running"
+        ? `Status: ACTIVE · Tailnet ${targetTailnetIp} · Port ${targetPort}`
+        : `Warning: Container #${targetVmid} is currently STOPPED. Type 'start' to boot.`,
       ``,
     ];
     setLines(banner);
-  }, [workload]);
+
+    if (!hasToken || targetState !== "running") {
+      setVncFallbackActive(true);
+      setStatusNote(
+        targetState !== "running"
+          ? `Guest #${targetVmid} is stopped — local diagnostic shell active.`
+          : "Offline preview mode — authenticate to attach live noVNC.",
+      );
+      return;
+    }
+
+    setStatusNote("Minting ephemeral Proxmox VNC ticket...");
+    let cancelled = false;
+
+    requestConsoleSession(targetNode, targetType, targetVmid)
+      .then((session) => {
+        if (cancelled || !vncScreenRef.current) return;
+
+        vncScreenRef.current.innerHTML = "";
+        setStatusNote(
+          `Authenticating RFB stream (port ${session.port}, ${session.user})...`,
+        );
+
+        const rfb = new RFB(vncScreenRef.current, session.wsUrl, {
+          wsProtocols: ["binary"],
+          credentials: {
+            password: session.ticket,
+          },
+        });
+        rfb.scaleViewport = true;
+        rfb.resizeSession = targetType === "KVM";
+        rfb.focusOnClick = true;
+
+        rfb.addEventListener("credentialsrequired", () => {
+          if (!cancelled) {
+            rfb.sendCredentials({ password: session.ticket });
+          }
+        });
+
+        rfb.addEventListener("connect", () => {
+          if (!cancelled) {
+            setWsConnected(true);
+            setVncFallbackActive(false);
+            setStatusNote(
+              `noVNC RFB active · /api/v1/ws/vnc/${targetNode}/${targetType.toLowerCase()}/${targetVmid}`,
+            );
+          }
+        });
+
+        rfb.addEventListener("securityfailure", (e: CustomEvent) => {
+          if (!cancelled) {
+            const detail = e.detail as { status?: number; reason?: string };
+            setStatusNote(
+              `RFB auth failed (${detail?.reason || detail?.status || "rejected"})`,
+            );
+          }
+        });
+
+        rfb.addEventListener("disconnect", (e: CustomEvent) => {
+          if (!cancelled) {
+            setWsConnected(false);
+            const clean = Boolean((e.detail as { clean?: boolean })?.clean);
+            setStatusNote(
+              clean
+                ? "noVNC session closed."
+                : "noVNC relay disconnected — switched to local diagnostic shell.",
+            );
+            setVncFallbackActive(true);
+            setLines((prev) => [
+              ...prev,
+              `[WS-BRIDGE] noVNC RFB stream closed — local diagnostic shell active.`,
+              ``,
+            ]);
+          }
+        });
+
+        rfbRef.current = rfb;
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          const reason = err instanceof Error ? err.message : "offline";
+          setWsConnected(false);
+          setVncFallbackActive(true);
+          setStatusNote(
+            `VNC handshake failed (${reason}) — local shell active.`,
+          );
+          setLines((prev) => [
+            ...prev,
+            `[PVE-API] Console handshake skipped (${reason}) — local macro shell active.`,
+            ``,
+          ]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (rfbRef.current) {
+        rfbRef.current.disconnect();
+        rfbRef.current = null;
+      }
+    };
+  }, [
+    targetVmid,
+    targetNode,
+    targetType,
+    targetState,
+    targetName,
+    targetDesc,
+    targetRamGb,
+    targetTailnetIp,
+    targetPort,
+  ]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && workload) {
+      if (e.key === "Escape" && targetVmid !== null) {
         onClose();
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [workload, onClose]);
+  }, [targetVmid, onClose]);
 
   useEffect(() => {
     if (viewportRef.current) {
@@ -53,115 +191,22 @@ export const ConsoleDrawer: React.FC<ConsoleDrawerProps> = ({
   const hostPrompt = `root@${workload.name.toLowerCase()}:~#`;
 
   const runCommand = (raw: string) => {
-    const cmd = raw.trim();
-    if (!cmd) return;
-
-    if (cmd === "clear") {
+    const result = executeMockShellCommand(raw, workload, onTogglePower);
+    if (!result) return;
+    if (result.type === "clear") {
       setLines([]);
       return;
     }
-    if (cmd === "exit") {
+    if (result.type === "exit") {
       onClose();
       return;
     }
-
-    let output: string[] = [];
-    switch (cmd) {
-      case "help":
-        output = [
-          "Available diagnostic commands:",
-          "  systemctl status   Inspect primary service unit",
-          "  free -h            Display LXC cgroup memory allocation",
-          "  tailscale status   Verify WireGuard mesh peer routing",
-          "  journalctl -n 5    Tail recent systemd unit events",
-          "  df -h              Show mounted ZFS / LVM-Thin datasets",
-          "  uname -a           Print host kernel signature",
-          "  start              Power on container if stopped",
-          "  clear / exit       Reset buffer or close TTY session",
-        ];
-        break;
-      case "systemctl status":
-        output =
-          workload.state === "running"
-            ? [
-                `● ${workload.name.toLowerCase()}.service - ${workload.description}`,
-                `     Loaded: loaded (/etc/systemd/system/${workload.name.toLowerCase()}.service; enabled)`,
-                `     Active: active (running) since Boot (${workload.uptime} ago)`,
-                `   Main PID: ${1100 + workload.vmid} (daemon)`,
-                `      Tasks: 18 (limit: 4915)`,
-                `     Memory: ${((workload.ramPoolGb * workload.memPct) / 100).toFixed(2)}G / ${workload.ramPoolGb.toFixed(1)}G`,
-              ]
-            : [
-                `○ ${workload.name.toLowerCase()}.service - ${workload.description}`,
-                `     Loaded: loaded (/etc/systemd/system/${workload.name.toLowerCase()}.service; enabled)`,
-                `     Active: inactive (dead) — container halted`,
-              ];
-        break;
-      case "free -h": {
-        const usedMb = Math.round(
-          workload.ramPoolGb * 1024 * (workload.memPct / 100),
-        );
-        const totalMb = Math.round(workload.ramPoolGb * 1024);
-        output = [
-          "               total        used        free      shared  buff/cache   available",
-          `Mem:          ${totalMb}Mi       ${usedMb}Mi       ${totalMb - usedMb}Mi        12Mi        96Mi       ${totalMb - usedMb}Mi`,
-          "Swap:          512Mi         0Mi       512Mi",
-        ];
-        break;
-      }
-      case "tailscale status":
-        output = [
-          `100.117.21.82    pve-server           ryan@    linux   -`,
-          `${workload.tailnetIp.padEnd(16)} ${workload.name.toLowerCase().padEnd(20)} ryan@    linux   ${workload.state === "running" ? `active; direct ${workload.lanIp}:41641, tx 1420 rx 4890` : "offline"}`,
-        ];
-        break;
-      case "journalctl -n 5":
-        output = [
-          `Nov 25 00:20:01 ${workload.name.toLowerCase()} systemd[1]: Reached target Multi-User System.`,
-          `Nov 25 00:21:14 ${workload.name.toLowerCase()} kernel: cgroup: lxc.${workload.vmid} memory.high=${workload.ramPoolGb}G`,
-          `Nov 25 00:22:30 ${workload.name.toLowerCase()} daemon[${1100 + workload.vmid}]: Listening on ${workload.lanIp}:${workload.port}`,
-          `Nov 25 00:23:45 ${workload.name.toLowerCase()} tailscaled[412]: peer 100.117.21.82 RTT ${workload.rttMs || 1.1}ms`,
-          `Nov 25 00:24:12 ${workload.name.toLowerCase()} audit[901]: JWT session heartbeat OK`,
-        ];
-        break;
-      case "df -h":
-        output = [
-          "Filesystem            Size  Used Avail Use% Mounted on",
-          `/dev/pve/vm-${workload.vmid}-disk-0   16G  3.4G   12G  23% /`,
-          "tmpfs                 512M   12M  500M   3% /run",
-        ];
-        break;
-      case "uname -a":
-        output = [
-          `Linux ${workload.name.toLowerCase()} 6.8.12-43-pve #1 SMP PREEMPT_DYNAMIC PMX 6.8.12-43 (2026-11-12) x86_64 GNU/Linux`,
-        ];
-        break;
-      case "top":
-      case "htop":
-        output = [
-          `top - 00:25:00 up ${workload.uptime},  1 user,  load average: 0.34, 0.29, 0.25`,
-          `Tasks:  14 total,   1 running,  13 sleeping,   0 stopped,   0 zombie`,
-          `%Cpu(s):  ${workload.cpu.toFixed(2)} us,  0.12 sy,  0.00 ni, ${(99.88 - workload.cpu).toFixed(2)} id`,
-          `MiB Mem : ${(workload.ramPoolGb * 1024).toFixed(0)} total, ${((workload.ramPoolGb * 1024 * workload.memPct) / 100).toFixed(0)} used`,
-        ];
-        break;
-      case "start":
-        if (workload.state === "stopped") {
-          onTogglePower(workload.vmid);
-          output = [
-            `[PVE-API] Starting LXC #${workload.vmid} (${workload.name})... OK`,
-          ];
-        } else {
-          output = [`Container #${workload.vmid} is already running.`];
-        }
-        break;
-      default:
-        output = [
-          `bash: ${cmd}: command executed (exit 0) — type 'help' for rack macros`,
-        ];
-    }
-
-    setLines((prev) => [...prev, `${hostPrompt} ${cmd}`, ...output, ""]);
+    setLines((prev) => [
+      ...prev,
+      `${hostPrompt} ${raw.trim()}`,
+      ...result.lines,
+      "",
+    ]);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -197,7 +242,8 @@ export const ConsoleDrawer: React.FC<ConsoleDrawerProps> = ({
                 }`}
               />
               <strong style={{ fontSize: "13px", letterSpacing: "0.04em" }}>
-                TTY0 // #{workload.vmid} {workload.name}
+                {wsConnected ? "noVNC" : "TTY0"} // #{workload.vmid}{" "}
+                {workload.name}
               </strong>
               <span
                 style={{
@@ -211,78 +257,120 @@ export const ConsoleDrawer: React.FC<ConsoleDrawerProps> = ({
               >
                 {workload.tailnetIp}
               </span>
+              {wsConnected && (
+                <span
+                  style={{
+                    background: "rgba(34, 197, 94, 0.16)",
+                    border: "1px solid rgba(34, 197, 94, 0.45)",
+                    color: "#22C55E",
+                    fontSize: "10px",
+                    padding: "1px 6px",
+                    borderRadius: "2px",
+                  }}
+                >
+                  RFB LIVE
+                </span>
+              )}
             </div>
             <div
               style={{ fontSize: "11px", color: "#94A3B8", marginTop: "4px" }}
             >
-              pct enter {workload.vmid} · {workload.node} ·{" "}
-              {workload.description}
+              {statusNote ||
+                `pct enter ${workload.vmid} · ${workload.node} · ${workload.description}`}
             </div>
           </div>
 
           <div style={{ display: "flex", gap: "6px" }}>
-            <button
-              type="button"
-              className="tty-macro-btn"
-              onClick={() => runCommand("top")}
-            >
-              htop / top
-            </button>
-            <button
-              type="button"
-              className="tty-macro-btn"
-              onClick={() => setLines([])}
-            >
-              CLEAR
-            </button>
+            {wsConnected ? (
+              <button
+                type="button"
+                className="tty-macro-btn"
+                onClick={() => rfbRef.current?.sendCtrlAltDel()}
+              >
+                CTRL+ALT+DEL
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="tty-macro-btn"
+                  onClick={() => runCommand("top")}
+                >
+                  htop / top
+                </button>
+                <button
+                  type="button"
+                  className="tty-macro-btn"
+                  onClick={() => setLines([])}
+                >
+                  CLEAR
+                </button>
+              </>
+            )}
             <button type="button" className="console-keycap" onClick={onClose}>
               ESC ✕
             </button>
           </div>
         </div>
 
-        <div className="tty-macro-bar">
-          {[
-            "systemctl status",
-            "free -h",
-            "tailscale status",
-            "journalctl -n 5",
-          ].map((macro) => (
-            <button
-              key={macro}
-              type="button"
-              className="tty-macro-btn"
-              onClick={() => runCommand(macro)}
-            >
-              $ {macro}
-            </button>
-          ))}
-        </div>
+        <div
+          ref={vncScreenRef}
+          style={{
+            display: vncFallbackActive ? "none" : "flex",
+            flexDirection: "column",
+            flex: 1,
+            minHeight: "440px",
+            background: "#090D16",
+            overflow: "hidden",
+          }}
+        />
 
-        <div className="tty-viewport" ref={viewportRef}>
-          {lines.map((line, idx) => (
-            <div key={idx}>{line || "\u00A0"}</div>
-          ))}
-          <div>
-            <span style={{ color: "#22C55E" }}>{hostPrompt}</span>{" "}
-            <span className="cursor-blink" />
-          </div>
-        </div>
+        {vncFallbackActive && (
+          <>
+            <div className="tty-macro-bar">
+              {[
+                "systemctl status",
+                "free -h",
+                "tailscale status",
+                "journalctl -n 5",
+              ].map((macro) => (
+                <button
+                  key={macro}
+                  type="button"
+                  className="tty-macro-btn"
+                  onClick={() => runCommand(macro)}
+                >
+                  $ {macro}
+                </button>
+              ))}
+            </div>
 
-        <form className="tty-footer" onSubmit={handleSubmit}>
-          <span style={{ color: "#22C55E", fontSize: "12px" }}>#</span>
-          <input
-            type="text"
-            className="tty-input"
-            value={command}
-            onChange={(e) => setCommand(e.target.value)}
-            placeholder="Enter shell command (e.g. help, systemctl status, free -h)..."
-            autoFocus
-          />
-          <button type="submit" className="console-keycap">
-            SEND ↵
-          </button>
-        </form>
+            <div className="tty-viewport" ref={viewportRef}>
+              {lines.map((line, idx) => (
+                <div key={idx}>{line || "\u00A0"}</div>
+              ))}
+              <div>
+                <span style={{ color: "#22C55E" }}>{hostPrompt}</span>{" "}
+                <span className="cursor-blink" />
+              </div>
+            </div>
+
+            <form className="tty-footer" onSubmit={handleSubmit}>
+              <span style={{ color: "#22C55E", fontSize: "12px" }}>#</span>
+              <input
+                type="text"
+                className="tty-input"
+                value={command}
+                onChange={(e) => setCommand(e.target.value)}
+                placeholder="Enter shell command (e.g. help, systemctl status, free -h)..."
+                autoFocus
+              />
+              <button type="submit" className="console-keycap">
+                SEND ↵
+              </button>
+            </form>
+          </>
+        )}
       </div>
     </div>
   );

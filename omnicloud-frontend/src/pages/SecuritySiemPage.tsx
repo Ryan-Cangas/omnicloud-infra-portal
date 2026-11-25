@@ -1,10 +1,29 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { INITIAL_BANNED_IPS, INITIAL_SIEM_LOGS } from "../data/hypervisorData";
-import { Fail2BanEntry } from "../types/omnicloud";
+import { Fail2BanEntry, SiemAlert } from "../types/omnicloud";
 
-export const SecuritySiemPage: React.FC = () => {
+interface SecuritySiemPageProps {
+  liveAlerts?: SiemAlert[];
+  guestCount?: number;
+  operatorName?: string;
+}
+
+export const SecuritySiemPage: React.FC<SecuritySiemPageProps> = ({
+  liveAlerts,
+  guestCount = 9,
+  operatorName = "RYAN CANGAS",
+}) => {
   const [bans, setBans] = useState<Fail2BanEntry[]>(INITIAL_BANNED_IPS);
-  const [logs, setLogs] = useState(INITIAL_SIEM_LOGS);
+  const [logs, setLogs] = useState<SiemAlert[]>(INITIAL_SIEM_LOGS);
+
+  useEffect(() => {
+    if (liveAlerts && liveAlerts.length > 0) {
+      setLogs(liveAlerts);
+    }
+  }, [liveAlerts]);
+
+  const criticalCount = logs.filter((l) => l.level === "CRITICAL").length;
+  const warnCount = logs.filter((l) => l.level === "WARN").length;
 
   const handleUnban = (entry: Fail2BanEntry) => {
     setBans((prev) => prev.filter((b) => b.id !== entry.id));
@@ -15,7 +34,7 @@ export const SecuritySiemPage: React.FC = () => {
         level: "INFO",
         daemon: `fail2ban.${entry.jail}`,
         sourceIp: entry.ip,
-        message: `Manual operator unban executed by RYAN CANGAS (SUPERADMIN)`,
+        message: `Manual operator unban executed by ${operatorName.toUpperCase()} (SUPERADMIN)`,
       },
       ...prev,
     ]);
@@ -32,17 +51,24 @@ export const SecuritySiemPage: React.FC = () => {
           <div className="kpi-hero-row">
             <span
               className="kpi-hero-value"
-              style={{ color: "var(--signal-online)" }}
+              style={{
+                color:
+                  criticalCount > 0
+                    ? "var(--signal-vermilion)"
+                    : "var(--signal-online)",
+              }}
             >
-              0
+              {criticalCount}
             </span>
-            <span className="micro-label">CRITICAL · 2 WARN</span>
+            <span className="micro-label">CRITICAL · {warnCount} WARN</span>
           </div>
           <div
             className="kpi-foot-row"
             style={{ color: "var(--signal-online)" }}
           >
-            <span>✓ Integrity baseline verified across 9 guests</span>
+            <span>
+              ✓ Integrity baseline verified across {guestCount} guests
+            </span>
           </div>
         </div>
 
@@ -66,7 +92,7 @@ export const SecuritySiemPage: React.FC = () => {
         <div className="rack-card">
           <div className="kpi-top-row">
             <span className="micro-label">JWT CONTROL PLANE SESSIONS</span>
-            <span className="hw-tag">RS256</span>
+            <span className="hw-tag">HS256</span>
           </div>
           <div className="kpi-hero-row">
             <span className="kpi-hero-value">1</span>
@@ -76,7 +102,7 @@ export const SecuritySiemPage: React.FC = () => {
             className="kpi-foot-row"
             style={{ color: "var(--rack-ink-secondary)" }}
           >
-            <span>RYAN CANGAS · BOUND TO 100.117.21.82</span>
+            <span>{operatorName.toUpperCase()} · BOUND TO 100.117.21.82</span>
           </div>
         </div>
       </section>
@@ -88,7 +114,7 @@ export const SecuritySiemPage: React.FC = () => {
               <h2 className="module-title">
                 Live Security &amp; Audit Event Stream
               </h2>
-              <span className="hw-tag">SYSLOG / AUTH.LOG</span>
+              <span className="hw-tag">WAZUH / AUTH.LOG</span>
             </div>
             <p className="module-subtitle">
               Real-time authentication, DNS sinkhole, and perimeter firewall
@@ -120,14 +146,19 @@ export const SecuritySiemPage: React.FC = () => {
                 <span style={{ color: "#64748B" }}>{item.timestamp}</span>
                 <span
                   style={{
-                    color: item.level === "WARN" ? "#FBBF24" : "#22C55E",
+                    color:
+                      item.level === "CRITICAL"
+                        ? "#EF4444"
+                        : item.level === "WARN"
+                          ? "#FBBF24"
+                          : "#22C55E",
                     fontWeight: 600,
                     minWidth: "46px",
                   }}
                 >
                   [{item.level}]
                 </span>
-                <span style={{ color: "#94A3B8", minWidth: "130px" }}>
+                <span style={{ color: "#94A3B8", minWidth: "150px" }}>
                   {item.daemon}
                 </span>
                 <span style={{ color: "#F8FAFC" }}>{item.message}</span>

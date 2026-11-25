@@ -1,37 +1,73 @@
 import React, { useState } from "react";
 import { STORAGE_POOLS } from "../data/hypervisorData";
-import { LxcWorkload } from "../types/omnicloud";
+import { HostTelemetrySnapshot, LxcWorkload } from "../types/omnicloud";
 
 interface TelemetryPageProps {
   workloads: LxcWorkload[];
+  telemetry?: HostTelemetrySnapshot | null;
 }
 
-export const TelemetryPage: React.FC<TelemetryPageProps> = ({ workloads }) => {
+export const TelemetryPage: React.FC<TelemetryPageProps> = ({
+  workloads,
+  telemetry,
+}) => {
   const [windowSpan, setWindowSpan] = useState<"1H" | "6H" | "24H">("1H");
 
-  const allocatedRamGb = workloads
+  const fallbackRamGb = workloads
     .filter((w) => w.state === "running")
     .reduce((acc, w) => acc + (w.ramPoolGb * w.memPct) / 100, 3.8);
 
+  const cpuPct = telemetry ? telemetry.cpu.usage_pct : 19.2;
+  const cpuCores = telemetry ? telemetry.cpu.cores : 12;
+  const loadAvgStr = telemetry
+    ? telemetry.cpu.loadavg.map((n) => Number(n).toFixed(2)).join(", ")
+    : "0.42, 0.38, 0.31";
+  const ioWaitPct = telemetry ? telemetry.cpu.iowait_pct : 0.14;
+
+  const memUsedGb = telemetry ? telemetry.memory.used_gb : fallbackRamGb;
+  const memTotalGb = telemetry ? telemetry.memory.total_gb : 32.0;
+  const uptimeStr = telemetry
+    ? telemetry.system.uptime_formatted.toUpperCase()
+    : "68D 11H 04M";
+
+  const liveHistory = telemetry?.history ?? [];
   const cpuSeries =
-    windowSpan === "1H"
-      ? [14, 16, 15, 19, 22, 18, 17, 21, 19, 16, 18, 19.2]
-      : windowSpan === "6H"
-        ? [11, 13, 18, 26, 24, 19, 15, 14, 17, 20, 18, 19.2]
-        : [9, 12, 15, 28, 31, 22, 17, 14, 16, 21, 19, 19.2];
+    liveHistory.length >= 2
+      ? liveHistory.map((pt) => pt.cpu)
+      : windowSpan === "1H"
+        ? [14, 16, 15, 19, 22, 18, 17, 21, 19, 16, 18, 19.2]
+        : windowSpan === "6H"
+          ? [11, 13, 18, 26, 24, 19, 15, 14, 17, 20, 18, 19.2]
+          : [9, 12, 15, 28, 31, 22, 17, 14, 16, 21, 19, 19.2];
 
   const ramSeries =
-    windowSpan === "1H"
-      ? [44, 45, 45, 46, 46, 46, 47, 46, 46, 46, 46, 46.2]
-      : windowSpan === "6H"
-        ? [41, 42, 43, 45, 46, 46, 45, 45, 46, 46, 46, 46.2]
-        : [39, 40, 42, 44, 47, 46, 45, 45, 46, 46, 46, 46.2];
+    liveHistory.length >= 2
+      ? liveHistory.map((pt) => pt.memory)
+      : windowSpan === "1H"
+        ? [44, 45, 45, 46, 46, 46, 47, 46, 46, 46, 46, 46.2]
+        : windowSpan === "6H"
+          ? [41, 42, 43, 45, 46, 46, 45, 45, 46, 46, 46, 46.2]
+          : [39, 40, 42, 44, 47, 46, 45, 45, 46, 46, 46, 46.2];
+
+  const displayPools =
+    telemetry && telemetry.storage.pools.length > 0
+      ? telemetry.storage.pools.map((p) => ({
+          id: p.name,
+          mount: p.category,
+          filesystem: p.type.toUpperCase(),
+          device: `${p.free_gb.toFixed(1)} GB FREE`,
+          usedGb: p.used_gb,
+          totalGb: Math.max(p.total_gb, 1),
+          tempC: 36,
+          smartStatus: p.active ? ("PASSED" as const) : ("DEGRADED" as const),
+        }))
+      : STORAGE_POOLS;
 
   const toPolyline = (values: number[]) =>
     values
       .map((val, i) => {
-        const x = 40 + (i / (values.length - 1)) * 720;
-        const y = 170 - (val / 100) * 140;
+        const x = 40 + (i / Math.max(values.length - 1, 1)) * 720;
+        const y = 170 - (Math.min(100, Math.max(0, val)) / 100) * 140;
         return `${x.toFixed(1)},${y.toFixed(1)}`;
       })
       .join(" ");
@@ -41,40 +77,47 @@ export const TelemetryPage: React.FC<TelemetryPageProps> = ({ workloads }) => {
       <section className="kpi-grid-3" aria-label="Bare-Metal Host Telemetry">
         <div className="rack-card">
           <div className="kpi-top-row">
-            <span className="micro-label">CPU UTILIZATION (12-CORE)</span>
+            <span className="micro-label">
+              CPU UTILIZATION ({cpuCores}-CORE)
+            </span>
             <span className="hw-tag">SMP 6.8.12</span>
           </div>
           <div className="kpi-hero-row">
-            <span className="kpi-hero-value">19.2%</span>
-            <span className="micro-label">IDLE 80.8%</span>
+            <span className="kpi-hero-value">{cpuPct.toFixed(1)}%</span>
+            <span className="micro-label">
+              IDLE {(100 - cpuPct).toFixed(1)}%
+            </span>
           </div>
           <div className="meter-track">
-            <div className="meter-fill-online" style={{ width: "19.2%" }} />
+            <div
+              className="meter-fill-online"
+              style={{ width: `${Math.min(100, cpuPct)}%` }}
+            />
           </div>
           <div
             className="kpi-foot-row"
             style={{ color: "var(--rack-ink-secondary)" }}
           >
-            <span>LOAD AVG: 0.42, 0.38, 0.31</span>
-            <span>I/O WAIT: 0.14%</span>
+            <span>LOAD AVG: {loadAvgStr}</span>
+            <span>I/O WAIT: {ioWaitPct.toFixed(2)}%</span>
           </div>
         </div>
 
         <div className="rack-card">
           <div className="kpi-top-row">
             <span className="micro-label">HOST ECC MEMORY &amp; ZFS ARC</span>
-            <span className="hw-tag">32.0 GB DDR4</span>
+            <span className="hw-tag">{memTotalGb.toFixed(1)} GB DDR4</span>
           </div>
           <div className="kpi-hero-row">
-            <span className="kpi-hero-value">
-              {allocatedRamGb.toFixed(1)} GB
-            </span>
-            <span className="micro-label">/ 32.0 GB</span>
+            <span className="kpi-hero-value">{memUsedGb.toFixed(1)} GB</span>
+            <span className="micro-label">/ {memTotalGb.toFixed(1)} GB</span>
           </div>
           <div className="meter-track">
             <div
               className="meter-fill-online"
-              style={{ width: `${(allocatedRamGb / 32) * 100}%` }}
+              style={{
+                width: `${Math.min(100, (memUsedGb / Math.max(memTotalGb, 1)) * 100)}%`,
+              }}
             />
             <div className="meter-fill-ink" style={{ width: "12.5%" }} />
           </div>
@@ -82,7 +125,7 @@ export const TelemetryPage: React.FC<TelemetryPageProps> = ({ workloads }) => {
             className="kpi-foot-row"
             style={{ color: "var(--rack-ink-secondary)" }}
           >
-            <span>GUESTS: {(allocatedRamGb - 3.8).toFixed(1)} GB</span>
+            <span>GUESTS: {Math.max(0, memUsedGb - 3.8).toFixed(1)} GB</span>
             <span>ZFS ARC: 3.8 GB PINNED</span>
           </div>
         </div>
@@ -103,7 +146,7 @@ export const TelemetryPage: React.FC<TelemetryPageProps> = ({ workloads }) => {
             className="kpi-foot-row"
             style={{ color: "var(--signal-online)" }}
           >
-            <span>UPTIME: 68D 11H 04M</span>
+            <span>UPTIME: {uptimeStr}</span>
             <span>FAN: 1,420 RPM</span>
           </div>
         </div>
@@ -114,7 +157,11 @@ export const TelemetryPage: React.FC<TelemetryPageProps> = ({ workloads }) => {
           <div>
             <div className="module-title-row">
               <h2 className="module-title">Host Resource Oscilloscope</h2>
-              <span className="hw-tag">SAMPLING 1000MS</span>
+              <span className="hw-tag">
+                {liveHistory.length >= 2
+                  ? "LIVE RRD STREAM"
+                  : "SAMPLING 1000MS"}
+              </span>
             </div>
             <p className="module-subtitle">
               Real-time hypervisor compute and ECC memory allocation curves
@@ -214,7 +261,7 @@ export const TelemetryPage: React.FC<TelemetryPageProps> = ({ workloads }) => {
           <div>
             <div className="module-title-row">
               <h2 className="module-title">Storage Pool Hardware Rack</h2>
-              <span className="hw-tag">3 POOLS ONLINE</span>
+              <span className="hw-tag">{displayPools.length} POOLS ONLINE</span>
             </div>
             <p className="module-subtitle">
               Separated NVMe OS tier and thin-provisioned ZFS bulk datasets
@@ -235,7 +282,7 @@ export const TelemetryPage: React.FC<TelemetryPageProps> = ({ workloads }) => {
               </tr>
             </thead>
             <tbody>
-              {STORAGE_POOLS.map((pool) => {
+              {displayPools.map((pool) => {
                 const pct = Math.round((pool.usedGb / pool.totalGb) * 100);
                 return (
                   <tr key={pool.id}>

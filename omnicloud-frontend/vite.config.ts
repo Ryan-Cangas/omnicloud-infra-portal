@@ -2,25 +2,31 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, ".", "");
+  const env = loadEnv(mode, process.cwd(), "");
+  const apiTarget =
+    env.VITE_API_TARGET || "https://omnicloud.exocomet-gamut.ts.net";
 
   return {
     plugins: [react()],
-    server: {
-      host: "0.0.0.0",
-      port: 5173,
-      proxy: {
-        "/api": {
-          target: env.VITE_API_TARGET || "http://100.117.21.200:8443",
-          changeOrigin: true,
-          secure: false,
-        },
+    optimizeDeps: {
+      esbuildOptions: {
+        target: "esnext",
       },
     },
     build: {
-      target: "es2020",
-      sourcemap: false,
-      cssCodeSplit: true,
+      target: "esnext",
+    },
+    server: {
+      host: true,
+      port: 5173,
+      proxy: {
+        "/api": {
+          target: apiTarget,
+          changeOrigin: true,
+          secure: true,
+          ws: true,
+        },
+      },
     },
   };
 });

@@ -1,6 +1,6 @@
 import React from "react";
 import { CornerScrews } from "./CornerScrews";
-import { NavTabId } from "../types/omnicloud";
+import { AuthUser, NavTabId } from "../types/omnicloud";
 
 interface RackHeaderProps {
   activeTab: NavTabId;
@@ -9,6 +9,10 @@ interface RackHeaderProps {
   totalCount: number;
   theme: "light" | "dark";
   onToggleTheme: () => void;
+  user: AuthUser | null;
+  apiOnline: boolean;
+  onOpenAuth: () => void;
+  onLogout: () => void;
 }
 
 const CHANNELS: { id: NavTabId; index: string; label: string }[] = [
@@ -17,6 +21,7 @@ const CHANNELS: { id: NavTabId; index: string; label: string }[] = [
   { id: "sdn", index: "03", label: "SDN TAILSCALE MESH" },
   { id: "catalog", index: "04", label: "SERVICE CATALOG" },
   { id: "security", index: "05", label: "SECURITY & SIEM" },
+  { id: "provision", index: "06", label: "IAC DEPLOY" },
 ];
 
 export const RackHeader: React.FC<RackHeaderProps> = ({
@@ -26,14 +31,23 @@ export const RackHeader: React.FC<RackHeaderProps> = ({
   totalCount,
   theme,
   onToggleTheme,
+  user,
+  apiOnline,
+  onOpenAuth,
+  onLogout,
 }) => {
+  const displayName = (user?.name || "OPERATOR").toUpperCase();
+  const displayRole = (user?.role || "GUEST").toUpperCase();
+
   return (
     <header>
       <div className="rack-header-plate">
         <CornerScrews />
         <div className="rack-serial-bar">
           <span>UNIT 1U // ANODIZED RACK CHASSIS · SERIES 01</span>
-          <span>REV 6.8.12-43</span>
+          <span>
+            {apiOnline ? "API LINK: LIVE (8443)" : "API LINK: STANDALONE CACHE"}
+          </span>
         </div>
 
         <div className="rack-identity-row">
@@ -44,10 +58,33 @@ export const RackHeader: React.FC<RackHeaderProps> = ({
             <div>
               <div className="rack-title-line">
                 <h1 className="rack-title">OMNICLOUD // RACK UNIT 01</h1>
-                <span className="jwt-badge">
-                  <span className="led-dot led-online" />
-                  JWT VALID - RYAN CANGAS
-                </span>
+                {user ? (
+                  <button
+                    type="button"
+                    className="jwt-badge"
+                    onClick={onLogout}
+                    title="Click to sign out and revoke local JWT"
+                    style={{ cursor: "pointer" }}
+                  >
+                    <span className="led-dot led-online" />
+                    JWT VALID - {displayName}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="jwt-badge"
+                    onClick={onOpenAuth}
+                    style={{
+                      cursor: "pointer",
+                      borderColor: "var(--signal-vermilion)",
+                      color: "var(--signal-vermilion)",
+                      background: "rgba(224, 60, 31, 0.08)",
+                    }}
+                  >
+                    <span className="led-dot led-vermilion" />
+                    UNAUTHENTICATED · SIGN IN
+                  </button>
+                )}
               </div>
               <div className="rack-submeta">
                 PVE-SERVER · KERNEL 6.8.12-43-PVE · TAILNET 100.117.21.82
@@ -72,7 +109,7 @@ export const RackHeader: React.FC<RackHeaderProps> = ({
                 className="rack-readout-val"
                 style={{ color: "var(--signal-vermilion)" }}
               >
-                SUPERADMIN
+                {displayRole}
               </div>
             </div>
 

@@ -333,7 +333,7 @@ async def verify_websocket_superadmin(websocket: WebSocket, token: Optional[str]
 # WebSocket Endpoint for Live Terraform Plan/Apply Execution
 @app.websocket("/api/v1/ws/provision/terraform")
 async def ws_terraform_provision(websocket: WebSocket):
-    await websocket.accept()  # Must accept before receiving frame
+    await websocket.accept()
     try:
         init_data = await websocket.receive_text()
         params = json.loads(init_data)
@@ -343,12 +343,20 @@ async def ws_terraform_provision(websocket: WebSocket):
         if not is_authorized:
             return
 
+        if not os.path.isdir(INFRA_DIR):
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "data": f"INFRA_DIR '{INFRA_DIR}' does not exist on host. Create it and add your .tf configuration first."
+            }))
+            await websocket.close()
+            return
+
         action = params.get("action", "plan")
         tf_vars = [
-            f"-var=vmid={params.get('vmid')}",
-            f"-var=hostname={params.get('hostname')}",
-            f"-var=cores={params.get('cores')}",
-            f"-var=memory={params.get('memory')}",
+            f"-var=vmid={int(params.get('vmid', 110))}",
+            f"-var=hostname={str(params.get('hostname', 'worker-lxc')).strip()}",
+            f"-var=cores={int(params.get('cores', 2))}",
+            f"-var=memory={int(params.get('memory', 2048))}",
         ]
 
         if action == "plan":
@@ -386,7 +394,7 @@ async def ws_terraform_provision(websocket: WebSocket):
 # WebSocket Endpoint for Live Ansible Playbook Execution
 @app.websocket("/api/v1/ws/provision/ansible")
 async def ws_ansible_provision(websocket: WebSocket):
-    await websocket.accept()  # Must accept before receiving frame
+    await websocket.accept()
     try:
         init_data = await websocket.receive_text()
         params = json.loads(init_data)
@@ -396,11 +404,32 @@ async def ws_ansible_provision(websocket: WebSocket):
         if not is_authorized:
             return
 
-        playbook = params.get("playbook", "seerr-playbook.yml")
-        target_ip = params.get("target_ip")
+        if not os.path.isdir(INFRA_DIR):
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "data": f"INFRA_DIR '{INFRA_DIR}' does not exist on host."
+            }))
+            await websocket.close()
+            return
 
-        playbook_path = os.path.join(INFRA_DIR, playbook)
-        cmd = [ANSIBLE_BIN, "-i", f"{target_ip},", playbook_path, "-e", f"target_host={target_ip}"]
+        playbook = os.path.basename(str(params.get("playbook", "site.yml")).strip())
+        target_ip = str(params.get("target_ip", "")).strip()
+        if not target_ip:
+            await websocket.send_text(json.dumps({"type": "error", "data": "Missing target_ip."}))
+            await websocket.close()
+            return
+
+        infra_root = Path(INFRA_DIR).resolve()
+        playbook_path = (infra_root / playbook).resolve()
+        if playbook_path.parent != infra_root or not playbook_path.is_file():
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "data": f"Playbook '{playbook}' not found in {INFRA_DIR}."
+            }))
+            await websocket.close()
+            return
+
+        cmd = [ANSIBLE_BIN, "-i", f"{target_ip},", str(playbook_path), "-e", f"target_host={target_ip}"]
 
         await websocket.send_text(json.dumps({"type": "status", "data": f"Running Ansible playbook {playbook} on {target_ip}..."}))
         rc = await run_subprocess_stream(cmd, cwd=INFRA_DIR, websocket=websocket)
@@ -432,24 +461,32 @@ def enforce_vm_access(vmid: int, user: UserContext, required_action: str = "view
         )
 
 def get_pve_auth_headers_and_cookies():
-    """Retrieve PVE session ticket and CSRF token when Proxmox API token is unconfigured."""
+    """Retrieve PVE PAM session ticket and CSRF token for VNC/vncterm WebSocket auth."""
+    if PROXMOX_PASSWORD:
+        url = f"https://{PROXMOX_HOST}:8006/api2/json/access/ticket"
+        resp = requests.post(
+            url,
+            data={"username": PROXMOX_USER, "password": PROXMOX_PASSWORD},
+            verify=False,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="PVE Session Ticket Generation Failed")
+        data = resp.json()["data"]
+        return {
+            "headers": {"CSRFPreventionToken": data["CSRFPreventionToken"]},
+            "cookies": {"PVEAuthCookie": data["ticket"]},
+            "session_ticket": data["ticket"],
+        }
+
     if PROXMOX_TOKEN_NAME and PROXMOX_TOKEN_VALUE:
         return {
             "headers": {"Authorization": f"PVEAPIToken={PROXMOX_USER}!{PROXMOX_TOKEN_NAME}={PROXMOX_TOKEN_VALUE}"},
             "cookies": {},
-            "session_ticket": "API_TOKEN_AUTH"
+            "session_ticket": "API_TOKEN_AUTH",
         }
 
-    url = f"https://{PROXMOX_HOST}:8006/api2/json/access/ticket"
-    resp = requests.post(url, data={"username": PROXMOX_USER, "password": PROXMOX_PASSWORD}, verify=False, timeout=10)
-    if resp.status_code != 200:
-        raise HTTPException(status_code=resp.status_code, detail="PVE Session Ticket Generation Failed")
-    data = resp.json()["data"]
-    return {
-        "headers": {"CSRFPreventionToken": data["CSRFPreventionToken"]},
-        "cookies": {"PVEAuthCookie": data["ticket"]},
-        "session_ticket": data["ticket"]
-    }
+    raise HTTPException(status_code=500, detail="No Proxmox credentials configured for VNC proxy.")
 
 def format_uptime(seconds: int) -> str:
     days, rem = divmod(seconds, 86400)
